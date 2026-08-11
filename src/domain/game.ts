@@ -12,6 +12,7 @@ import type {
   Vec,
 } from "./types";
 import { idx, inside, other } from "./types";
+import { crownCount, formationFromSetup } from "./formation";
 const back: Role[] = [
   "rook",
   "knight",
@@ -23,12 +24,12 @@ const back: Role[] = [
   "rook",
 ];
 const label: Record<Exclude<Role, "custom">, string> = {
-  king: "K",
-  queen: "Q",
-  rook: "R",
-  bishop: "B",
-  knight: "N",
-  pawn: "P",
+  king: "KI",
+  queen: "QU",
+  rook: "RO",
+  bishop: "BI",
+  knight: "KN",
+  pawn: "PO",
 };
 const at = (s: Match, p: Pos) => (inside(p) ? s.board[idx(p)] : null);
 const eq = (a: Pos, b: Pos) => a.row === b.row && a.col === b.col;
@@ -38,15 +39,14 @@ export function createMatch(
   preset: Preset,
 ): Match {
   const board: (Piece | null)[] = Array(64).fill(null);
+  const formation = formationFromSetup(setup);
   let id = 0;
   for (const color of ["black", "white"] as Color[]) {
     const r = color === "black" ? 0 : 7,
       pr = color === "black" ? 1 : 6;
     back.forEach((role, col) => {
-      const slot = (
-          ["rook", "knight", "bishop", "queen"].includes(role) ? role : null
-        ) as keyof Setup | null,
-        custom = slot ? setup[slot] : null;
+      const custom = formation[col],
+        pawnCustom = formation[8 + col];
       board[idx({ row: r, col })] = {
         id: `p${id++}`,
         color,
@@ -57,14 +57,13 @@ export function createMatch(
       board[idx({ row: pr, col })] = {
         id: `p${id++}`,
         color,
-        role: "pawn",
+        role: pawnCustom ? "custom" : "pawn",
+        definitionId: pawnCustom || undefined,
         moved: false,
       };
     });
   }
-  const crowns = Object.values(setup).filter(
-    (x) => defs.find((d) => d.id === x)?.isCrown,
-  ).length;
+  const crowns = crownCount(formation, defs);
   return {
     board,
     turn: "white",
@@ -101,6 +100,33 @@ function rays(
         if (t.color === color ? !jumpAllies : !jumpEnemies) break;
       }
     }
+  return out;
+}
+function cannonRays(
+  s: Match,
+  from: Pos,
+  color: Color,
+  vectors: Vec[],
+  max: number,
+  usage: Usage,
+) {
+  const out: Move[] = [];
+  for (const v of vectors) {
+    let screen = false;
+    for (let n = 1; n <= max; n++) {
+      const to = { row: from.row + v.dy * n, col: from.col + v.dx * n };
+      if (!inside(to)) break;
+      const target = at(s, to);
+      if (!screen) {
+        if (!target) {
+          if (usage !== "capture") out.push({ from, to });
+        } else screen = true;
+      } else if (target) {
+        if (target.color !== color && usage !== "move") out.push({ from, to });
+        break;
+      }
+    }
+  }
   return out;
 }
 const orth = [
@@ -189,19 +215,28 @@ export function pseudo(s: Match, from: Pos, defs: Definition[]) {
   if (!d) return [];
   const out: Move[] = [];
   for (const pattern of d.patterns) {
+    if (pattern.initialOnly && p.moved) continue;
     const sign = p.color === "white" ? 1 : -1,
       v = pattern.vectors.map((x) => ({ dx: x.dx, dy: x.dy * sign }));
+    const max =
+      pattern.kind === "leap"
+        ? 1
+        : pattern.range === "slide"
+          ? 7
+          : pattern.range;
+    if (pattern.kind === "direction" && pattern.cannon) {
+      out.push(
+        ...cannonRays(s, from, p.color, v, max, pattern.usage ?? "both"),
+      );
+      continue;
+    }
     out.push(
       ...rays(
         s,
         from,
         p.color,
         v,
-        pattern.kind === "leap"
-          ? 1
-          : pattern.range === "slide"
-            ? 7
-            : pattern.range,
+        max,
         pattern.kind === "leap" || pattern.jumpAllies || pattern.canJump,
         pattern.kind === "leap" || pattern.jumpEnemies || pattern.canJump,
         pattern.usage ?? "both",
@@ -262,6 +297,13 @@ export function legal(s: Match, from: Pos, d: Definition[]) {
     return !!k && !threatened(n, k, other(p.color), d);
   });
 }
+export function allLegal(s: Match, d: Definition[]) {
+  return s.board.flatMap((piece, i) =>
+    piece?.color === s.turn
+      ? legal(s, { row: Math.floor(i / 8), col: i % 8 }, d)
+      : [],
+  );
+}
 export function play(s: Match, m: Move, d: Definition[]) {
   const p = at(s, m.from)!,
     cap = at(s, m.to),
@@ -297,11 +339,7 @@ export function play(s: Match, m: Move, d: Definition[]) {
   if (s.preset === "classic" && cd?.isCrown)
     return { ...n, winner: p.color, message: "王冠駒が取られました。" };
   if (s.preset === "classic" && !n.winner) {
-    const moves = n.board.flatMap((x, i) =>
-      x?.color === enemy
-        ? legal(n, { row: Math.floor(i / 8), col: i % 8 }, d)
-        : [],
-    );
+    const moves = allLegal(n, d);
     if (!moves.length) {
       const k = king(n, enemy),
         check = k && threatened(n, k, p.color, d);
@@ -310,6 +348,8 @@ export function play(s: Match, m: Move, d: Definition[]) {
         : { ...n, draw: true, message: "ステイルメイトです。" };
     }
   }
+  if (s.preset !== "classic" && !n.winner && !allLegal(n, d).length)
+    n = { ...n, draw: true, message: "合法手がないため引き分けです。" };
   return n;
 }
 export function pieceText(p: Piece, d: Definition[]) {

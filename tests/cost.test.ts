@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cost, errors } from "../src/domain/cost";
+import { cost, errors, normalize } from "../src/domain/cost";
 import type { Definition } from "../src/domain/types";
 const make = (partial: Partial<Definition> = {}): Definition => ({
   id: "a",
@@ -17,6 +17,90 @@ const make = (partial: Partial<Definition> = {}): Definition => ({
   ...partial,
 });
 describe("cost", () => {
+  it("normalizes two-letter symbols and reserves standard abbreviations", () => {
+    expect(normalize(make({ symbol: "dr" })).symbol).toBe("DR");
+    expect(errors(make({ symbol: "KN" }))).toContain(
+      "標準駒の予約記号は使用できません。",
+    );
+    expect(errors(make({ symbol: "K" }))).not.toContain(
+      "標準駒の予約記号は使用できません。",
+    );
+  });
+  it("discounts initial-only movement but not cannon fees", () => {
+    const vectors = [
+      { dx: 1, dy: 0 },
+      { dx: -1, dy: 0 },
+      { dx: 0, dy: 1 },
+      { dx: 0, dy: -1 },
+    ];
+    expect(
+      cost(
+        make({
+          patterns: [
+            { kind: "direction", vectors, range: "slide", initialOnly: true },
+          ],
+        }),
+      ),
+    ).toBe(12);
+    expect(
+      cost(
+        make({
+          patterns: [
+            {
+              kind: "direction",
+              vectors,
+              range: "slide",
+              initialOnly: true,
+              cannon: true,
+            },
+          ],
+        }),
+      ),
+    ).toBe(21);
+    expect(
+      cost(
+        make({
+          patterns: [
+            { kind: "direction", vectors, range: "slide", cannon: true },
+          ],
+        }),
+      ),
+    ).toBe(29);
+  });
+
+  it("rejects cannon combined with move-only or free jumping", () => {
+    expect(
+      errors(
+        make({
+          patterns: [
+            {
+              kind: "direction",
+              vectors: [{ dx: 1, dy: 0 }],
+              range: 3,
+              usage: "move",
+              cannon: true,
+            },
+          ],
+        }),
+      ),
+    ).toContain("キャノンは移動専用・飛び越しと併用できません。");
+    expect(
+      errors(
+        make({
+          patterns: [
+            {
+              kind: "direction",
+              vectors: [{ dx: 1, dy: 0 }],
+              range: 3,
+              cannon: true,
+              jumpEnemies: true,
+            },
+          ],
+        }),
+      ),
+    ).toContain("キャノンは移動専用・飛び越しと併用できません。");
+  });
+
   it("discounts move-only and capture-only movement", () => {
     const vectors = [
       { dx: 1, dy: 0 },

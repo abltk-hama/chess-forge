@@ -1,12 +1,29 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import "./App.css";
-import { cost, errors, normalize } from "./domain/cost";
+import {
+  cost,
+  errors,
+  MAX_DEFINITIONS,
+  normalize,
+  RESERVED_SYMBOLS,
+} from "./domain/cost";
 import { createMatch, legal, pieceText, play } from "./domain/game";
+import {
+  crownCount as countCrowns,
+  formationErrors,
+  formationFromSetup,
+  formationMode,
+  KING_SLOT,
+  slotLimit,
+} from "./domain/formation";
 import {
   directions,
   emptySetup,
   idx,
   type Definition,
+  type AIDifficulty,
+  type GameMode,
+  type FormationMode,
   type Match,
   type Pos,
   type Preset,
@@ -44,6 +61,8 @@ const editable = (source: Definition): Definition => ({
           vectors: structuredClone(pattern.vectors),
           range: pattern.range,
           usage: pattern.usage ?? "both",
+          initialOnly: pattern.initialOnly ?? false,
+          cannon: pattern.cannon ?? false,
           jumpAllies:
             pattern.range !== 1 &&
             (pattern.jumpAllies ?? pattern.canJump ?? false),
@@ -83,6 +102,20 @@ function Editor({
 }) {
   const [d, setD] = useState(blank);
   const editing = all.some((x) => x.id === d.id);
+  const normalizedSymbol = d.symbol.trim().toUpperCase();
+  const usedSymbols = all
+    .filter((item) => item.id !== d.id)
+    .map((item) => item.symbol.toUpperCase())
+    .sort();
+  const symbolState = !normalizedSymbol
+    ? "記号を入力してください。"
+    : (RESERVED_SYMBOLS as readonly string[]).includes(normalizedSymbol)
+      ? "標準駒の予約記号です。"
+      : usedSymbols.includes(normalizedSymbol)
+        ? "別のオリジナル駒が使用中です。"
+        : /^[A-Z]{1,2}$/.test(normalizedSymbol)
+          ? "使用可能です。"
+          : "英字1～2文字で入力してください。";
   const updatePattern = (
     index: number,
     pattern: Definition["patterns"][number],
@@ -110,7 +143,7 @@ function Editor({
         : []),
     ],
     n = cost(d),
-    canSave = !e.length && (editing || all.length < 4);
+    canSave = !e.length && (editing || all.length < MAX_DEFINITIONS);
   return (
     <section>
       <h2>駒エディター</h2>
@@ -128,10 +161,28 @@ function Editor({
             記号
             <input
               value={d.symbol}
-              maxLength={1}
-              onChange={(x) => setD({ ...d, symbol: x.target.value })}
+              maxLength={2}
+              onChange={(x) =>
+                setD({ ...d, symbol: x.target.value.toUpperCase() })
+              }
             />
           </label>
+          <div className="symbol-guide">
+            <p
+              className={
+                symbolState === "使用可能です。" ? "available" : "error"
+              }
+            >
+              {symbolState}
+            </p>
+            <p>
+              <b>標準予約：</b> {RESERVED_SYMBOLS.join(" ")}
+            </p>
+            <p>
+              <b>使用中：</b>{" "}
+              {usedSymbols.length ? usedSymbols.join(" ") : "なし"}
+            </p>
+          </div>
           <div className="pattern-list">
             {d.patterns.map((pattern, index) => (
               <fieldset className="pattern-card" key={index}>
@@ -149,10 +200,17 @@ function Editor({
                               vectors: [],
                               range: 1,
                               usage: "both",
+                              initialOnly: false,
+                              cannon: false,
                               jumpAllies: false,
                               jumpEnemies: false,
                             }
-                          : { kind: "leap", vectors: [], usage: "both" },
+                          : {
+                              kind: "leap",
+                              vectors: [],
+                              usage: "both",
+                              initialOnly: false,
+                            },
                       )
                     }
                   >
@@ -180,6 +238,10 @@ function Editor({
                       updatePattern(index, {
                         ...pattern,
                         usage: event.target.value as Usage,
+                        ...(pattern.kind === "direction" &&
+                        event.target.value === "move"
+                          ? { cannon: false }
+                          : {}),
                       })
                     }
                   >
@@ -187,6 +249,19 @@ function Editor({
                     <option value="move">移動専用</option>
                     <option value="capture">捕獲専用</option>
                   </select>
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={!!pattern.initialOnly}
+                    onChange={(event) =>
+                      updatePattern(index, {
+                        ...pattern,
+                        initialOnly: event.target.checked,
+                      })
+                    }
+                  />
+                  初回限定（基本移動コスト半額）
                 </label>
                 {pattern.kind === "direction" ? (
                   <>
@@ -208,6 +283,8 @@ function Editor({
                               x.target.value === "1"
                                 ? false
                                 : pattern.jumpEnemies,
+                            cannon:
+                              x.target.value === "1" ? false : pattern.cannon,
                             canJump: undefined,
                           })
                         }
@@ -244,6 +321,7 @@ function Editor({
                           updatePattern(index, {
                             ...pattern,
                             jumpAllies: x.target.checked,
+                            cannon: x.target.checked ? false : pattern.cannon,
                             canJump: undefined,
                           })
                         }
@@ -259,11 +337,38 @@ function Editor({
                           updatePattern(index, {
                             ...pattern,
                             jumpEnemies: x.target.checked,
+                            cannon: x.target.checked ? false : pattern.cannon,
                             canJump: undefined,
                           })
                         }
                       />
                       敵飛び越し（基本+5、射程加算は味方の2倍）
+                    </label>
+                    <label>
+                      <input
+                        type="checkbox"
+                        disabled={
+                          pattern.range === 1 ||
+                          (pattern.usage ?? "both") === "move"
+                        }
+                        checked={!!pattern.cannon}
+                        onChange={(event) =>
+                          updatePattern(index, {
+                            ...pattern,
+                            cannon: event.target.checked,
+                            jumpAllies: event.target.checked
+                              ? false
+                              : pattern.jumpAllies,
+                            jumpEnemies: event.target.checked
+                              ? false
+                              : pattern.jumpEnemies,
+                            canJump: event.target.checked
+                              ? undefined
+                              : pattern.canJump,
+                          })
+                        }
+                      />
+                      キャノン捕獲（スクリーン1枚必須）
                     </label>
                   </>
                 ) : (
@@ -309,6 +414,8 @@ function Editor({
                     vectors: [],
                     range: 1,
                     usage: "both",
+                    initialOnly: false,
+                    cannon: false,
                     jumpAllies: false,
                     jumpEnemies: false,
                   },
@@ -349,7 +456,9 @@ function Editor({
           {editing && (
             <button onClick={() => setD(blank())}>編集をキャンセル</button>
           )}
-          <p>{all.length}/4種類</p>
+          <p>
+            {all.length}/{MAX_DEFINITIONS}種類
+          </p>
         </div>
       </div>
       <div className="cards">
@@ -411,7 +520,13 @@ function Preview({ d }: { d: Definition }) {
   }));
   const targets = new Map<
     string,
-    { move: boolean; capture: boolean; leap: boolean }
+    {
+      move: boolean;
+      capture: boolean;
+      leap: boolean;
+      initial: boolean;
+      cannon: boolean;
+    }
   >();
   for (const p of d.patterns)
     for (const v of p.vectors) {
@@ -422,11 +537,15 @@ function Preview({ d }: { d: Definition }) {
           move: false,
           capture: false,
           leap: false,
+          initial: false,
+          cannon: false,
         };
         const usage = p.usage ?? "both";
         target.move ||= usage !== "capture";
         target.capture ||= usage !== "move";
         target.leap ||= p.kind === "leap";
+        target.initial ||= !!p.initialOnly;
+        target.cannon ||= p.kind === "direction" && !!p.cannon;
         targets.set(key, target);
       }
     }
@@ -444,7 +563,7 @@ function Preview({ d }: { d: Definition }) {
           : "";
         return (
           <span
-            className={`${origin ? "origin" : mode} ${target?.leap ? "fixed-leap" : ""}`}
+            className={`${origin ? "origin" : mode} ${target?.leap ? "fixed-leap" : ""} ${target?.initial ? "initial-only" : ""} ${target?.cannon ? "cannon-range" : ""}`}
             key={i}
           >
             {origin ? d.symbol || "駒" : ""}
@@ -460,6 +579,10 @@ function SetupView({
   setSetup,
   preset,
   setPreset,
+  mode: gameMode,
+  setMode: setGameMode,
+  difficulty,
+  setDifficulty,
   start,
 }: {
   defs: Definition[];
@@ -467,14 +590,54 @@ function SetupView({
   setSetup: (s: Setup) => void;
   preset: Preset;
   setPreset: (p: Preset) => void;
+  mode: GameMode;
+  setMode: (mode: GameMode) => void;
+  difficulty: AIDifficulty;
+  setDifficulty: (difficulty: AIDifficulty) => void;
   start: () => void;
 }) {
-  const crownCount =
-    setup.queen && defs.find((d) => d.id === setup.queen)?.isCrown ? 1 : 0;
+  const [selectedSlot, setSelectedSlot] = useState(0);
+  const formation = formationFromSetup(setup);
+  const layoutMode = formationMode(setup);
+  const crowns = countCrowns(formation, defs);
+  const issues = formationErrors(formation, layoutMode, defs);
+  const files = "abcdefgh";
+  const standardSymbols = ["RO", "KN", "BI", "QU", "KI", "BI", "KN", "RO"];
+  const selectedId = formation[selectedSlot];
+  const selectedDefinition = defs.find(
+    (definition) => definition.id === selectedId,
+  );
+  const changeFormation = (next: (string | null)[]) =>
+    setSetup({ ...setup, mode: layoutMode, formation: next });
+  const canPlace = (definition: Definition) => {
+    if (layoutMode === "free") return true;
+    const next = [...formation];
+    next[selectedSlot] = definition.id;
+    return !formationErrors(next, layoutMode, defs).length;
+  };
+  useEffect(() => {
+    if (crowns >= 2 && preset === "royal-all") setPreset("royal-any");
+  }, [crowns, preset, setPreset]);
   return (
     <section>
       <h2>対局設定</h2>
       <div className="panel setup">
+        <label>
+          配置モード
+          <select
+            value={layoutMode}
+            onChange={(event) =>
+              setSetup({
+                ...setup,
+                mode: event.target.value as FormationMode,
+                formation,
+              })
+            }
+          >
+            <option value="balanced">バランス配置</option>
+            <option value="free">自由配置</option>
+          </select>
+        </label>
         <label>
           ルール
           <select
@@ -483,34 +646,113 @@ function SetupView({
           >
             <option value="classic">クラシック拡張</option>
             <option value="royal-any">ロイヤルハント ANY</option>
-            <option value="royal-all">ロイヤルハント ALL</option>
+            <option value="royal-all" disabled={crowns >= 2}>
+              ロイヤルハント ALL
+            </option>
           </select>
         </label>
-        {(["rook", "knight", "bishop", "queen"] as const).map((slot) => (
-          <label key={slot}>
-            {slot}
-            <select
-              value={setup[slot] ?? ""}
-              onChange={(e) =>
-                setSetup({ ...setup, [slot]: e.target.value || null })
-              }
-            >
-              <option value="">標準駒</option>
-              {defs
-                .filter((d) => !d.isCrown || slot === "queen")
-                .map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.symbol} {d.name} ({cost(d)})
-                    {usesLegacyJump(d) ? " 旧コスト" : ""}
+        {crowns >= 2 && (
+          <p className="notice-inline">
+            Crownが2体以上のためRoyal Hunt ALLは選択できません。
+          </p>
+        )}
+        <label>
+          対局モード
+          <select
+            value={gameMode}
+            onChange={(event) => setGameMode(event.target.value as GameMode)}
+          >
+            <option value="local">ローカル2人対戦</option>
+            <option value="ai">AI対戦（人間：白）</option>
+          </select>
+        </label>
+        <label>
+          AI難易度
+          <select
+            disabled={gameMode !== "ai"}
+            value={difficulty}
+            onChange={(event) =>
+              setDifficulty(event.target.value as AIDifficulty)
+            }
+          >
+            <option value="easy">EASY</option>
+            <option value="normal">NORMAL</option>
+            <option value="hard">HARD</option>
+          </select>
+        </label>
+        <div className="formation-editor">
+          <div className="formation-grid" aria-label="白の編成">
+            {formation.map((definitionId, index) => {
+              const definition = defs.find((item) => item.id === definitionId);
+              const symbol =
+                definition?.symbol ??
+                (index < 8 ? standardSymbols[index] : "PO");
+              const square = `${files[index % 8]}${index < 8 ? 1 : 2}`;
+              return (
+                <button
+                  type="button"
+                  className={selectedSlot === index ? "selected-slot" : ""}
+                  disabled={index === KING_SLOT}
+                  aria-label={`編成 ${square}`}
+                  onClick={() => setSelectedSlot(index)}
+                  key={index}
+                >
+                  <span>{symbol}</span>
+                  <small>{square}</small>
+                </button>
+              );
+            })}
+          </div>
+          <div className="formation-control">
+            <h3>
+              {files[selectedSlot % 8]}
+              {selectedSlot < 8 ? 1 : 2} の駒
+            </h3>
+            <label>
+              配置する駒
+              <select
+                aria-label="配置する駒"
+                disabled={selectedSlot === KING_SLOT}
+                value={selectedId ?? ""}
+                onChange={(event) => {
+                  const next = [...formation];
+                  next[selectedSlot] = event.target.value || null;
+                  changeFormation(next);
+                }}
+              >
+                <option value="">標準駒</option>
+                {defs.map((definition) => (
+                  <option
+                    value={definition.id}
+                    disabled={!canPlace(definition)}
+                    key={definition.id}
+                  >
+                    {definition.symbol} {definition.name} ({cost(definition)})
+                    {definition.isCrown ? " Crown" : ""}
+                    {usesLegacyJump(definition) ? " 旧コスト" : ""}
                   </option>
                 ))}
-            </select>
-          </label>
+              </select>
+            </label>
+            <p>
+              {layoutMode === "free"
+                ? "King以外・コスト30まで配置可能"
+                : `この枠の上限：${slotLimit(selectedSlot)}`}
+            </p>
+            {selectedDefinition && (
+              <p>
+                選択中：{selectedDefinition.symbol} {selectedDefinition.name}
+              </p>
+            )}
+            <p>Crown：{crowns}体／陣営</p>
+          </div>
+        </div>
+        {issues.map((issue) => (
+          <p className="error" key={issue}>
+            {issue}
+          </p>
         ))}
-        {crownCount > 1 && (
-          <p className="error">王冠駒は1枠だけ配置できます。</p>
-        )}
-        <button disabled={crownCount > 1} onClick={start}>
+        <button disabled={!!issues.length} onClick={start}>
           対局開始
         </button>
       </div>
@@ -524,13 +766,13 @@ const standardGuides: { key: string; label: string; definition: Definition }[] =
     [
       "king",
       "キング",
-      "K",
+      "KI",
       [{ kind: "direction", vectors: directions, range: 1, usage: "both" }],
     ],
     [
       "queen",
       "クイーン",
-      "Q",
+      "QU",
       [
         {
           kind: "direction",
@@ -543,7 +785,7 @@ const standardGuides: { key: string; label: string; definition: Definition }[] =
     [
       "rook",
       "ルーク",
-      "R",
+      "RO",
       [
         {
           kind: "direction",
@@ -556,19 +798,19 @@ const standardGuides: { key: string; label: string; definition: Definition }[] =
     [
       "bishop",
       "ビショップ",
-      "B",
+      "BI",
       [{ kind: "direction", vectors: diagonal, range: "slide", usage: "both" }],
     ],
     [
       "knight",
       "ナイト",
-      "N",
+      "KN",
       [{ kind: "leap", vectors: knightVectors, usage: "both" }],
     ],
     [
       "pawn",
       "ポーン",
-      "P",
+      "PO",
       [
         {
           kind: "direction",
@@ -617,6 +859,10 @@ function MovementViewer({ defs }: { defs: Definition[] }) {
   const enemyJump = guide.definition.patterns.some(
     (p) => p.kind === "direction" && (p.jumpEnemies || p.canJump),
   );
+  const initialOnly = guide.definition.patterns.some((p) => p.initialOnly);
+  const cannon = guide.definition.patterns.some(
+    (p) => p.kind === "direction" && p.cannon,
+  );
   return (
     <div className="movement-viewer">
       <h3>駒の移動方法</h3>
@@ -640,6 +886,8 @@ function MovementViewer({ defs }: { defs: Definition[] }) {
         <span className="legend-move">移動専用</span>
         <span className="legend-capture">捕獲専用</span>
         <span className="legend-leap">固定跳躍</span>
+        <span className="legend-initial">初回限定</span>
+        <span className="legend-cannon">キャノン</span>
       </div>
       <p>{custom ? `コスト ${cost(guide.definition)}/30` : "標準駒"}</p>
       {guide.definition.isCrown && <p>♛ Crown</p>}
@@ -649,6 +897,8 @@ function MovementViewer({ defs }: { defs: Definition[] }) {
           {[allyJump && "味方", enemyJump && "敵"].filter(Boolean).join("・")}
         </p>
       )}
+      {initialOnly && <p>初回限定：未移動時だけ使用可能</p>}
+      {cannon && <p>キャノン：スクリーン1枚を越えた最初の敵を捕獲</p>}
       {guide.key === "standard:pawn" && (
         <p>初回の2マス移動とアンパッサンは盤上ルールとして適用されます。</p>
       )}
@@ -659,17 +909,69 @@ function Game({
   match,
   setMatch,
   defs,
+  mode,
+  difficulty,
   onExit,
 }: {
   match: Match;
   setMatch: (m: Match) => void;
   defs: Definition[];
+  mode: GameMode;
+  difficulty: AIDifficulty;
   onExit: () => void;
 }) {
   const [selected, setSelected] = useState<Pos | null>(null);
+  const [thinking, setThinking] = useState(false);
+  const [aiError, setAiError] = useState("");
+  useEffect(() => {
+    if (mode !== "ai" || match.turn !== "black" || match.winner || match.draw)
+      return;
+    const worker = new Worker(
+      new URL("./domain/ai.worker.ts", import.meta.url),
+      { type: "module" },
+    );
+    let active = true;
+    setThinking(true);
+    setAiError("");
+    setSelected(null);
+    worker.onmessage = (
+      event: MessageEvent<{
+        move?: import("./domain/types").Move | null;
+        error?: string;
+      }>,
+    ) => {
+      if (!active) return;
+      setThinking(false);
+      if (event.data.error) {
+        setAiError(`AIエラー：${event.data.error}`);
+        return;
+      }
+      setMatch(
+        event.data.move
+          ? play(match, event.data.move, defs)
+          : {
+              ...match,
+              draw: true,
+              message: "AIに合法手がないため引き分けです。",
+            },
+      );
+    };
+    worker.onerror = () => {
+      if (!active) return;
+      setThinking(false);
+      setAiError("AIエラー：思考処理を開始できませんでした。");
+    };
+    worker.postMessage({ match, defs, difficulty });
+    return () => {
+      active = false;
+      worker.terminate();
+    };
+  }, [match, defs, mode, difficulty, setMatch]);
+  const locked = thinking || (mode === "ai" && match.turn === "black");
   const moves = selected ? legal(match, selected, defs) : [];
   const targets = new Set(moves.map((m) => `${m.to.row},${m.to.col}`));
   const click = (p: Pos) => {
+    if (locked) return;
     if (selected) {
       const move = moves.find((m) => m.to.row === p.row && m.to.col === p.col);
       if (move) {
@@ -686,7 +988,7 @@ function Game({
       <div className="game-head">
         <div>
           <h2>対局</h2>
-          <p>{match.message}</p>
+          <p>{aiError || (thinking ? "AI思考中…" : match.message)}</p>
         </div>
         <button onClick={onExit}>終了</button>
       </div>
@@ -699,6 +1001,7 @@ function Game({
                 aria-label={`${p.row},${p.col}`}
                 className={`${(p.row + p.col) % 2 ? "dark" : "light"} ${selected?.row === p.row && selected.col === p.col ? "selected" : ""} ${targets.has(`${p.row},${p.col}`) ? "move" : ""}`}
                 onClick={() => click(p)}
+                aria-disabled={locked}
                 key={i}
               >
                 {piece && (
@@ -717,7 +1020,7 @@ function Game({
             ))}
           </ol>
           <button
-            disabled={!!match.winner || match.draw}
+            disabled={!!match.winner || match.draw || thinking}
             onClick={() =>
               setMatch({
                 ...match,
@@ -729,7 +1032,7 @@ function Game({
             投了
           </button>
           <button
-            disabled={!!match.winner || match.draw}
+            disabled={!!match.winner || match.draw || thinking}
             onClick={() =>
               setMatch({
                 ...match,
@@ -756,6 +1059,8 @@ export default function App() {
   const [defs, setDefs] = useState<Definition[]>(initial?.definitions ?? []),
     [setup, setSetup] = useState<Setup>(initial?.setup ?? emptySetup()),
     [preset, setPreset] = useState<Preset>(initial?.preset ?? "classic"),
+    [mode, setMode] = useState<GameMode>("local"),
+    [difficulty, setDifficulty] = useState<AIDifficulty>("normal"),
     [page, setPage] = useState<Page>("home"),
     [match, setMatch] = useState<Match | null>(null),
     [notice, setNotice] = useState("");
@@ -828,6 +1133,10 @@ export default function App() {
               knight: setup.knight === id ? null : setup.knight,
               bishop: setup.bishop === id ? null : setup.bishop,
               queen: setup.queen === id ? null : setup.queen,
+              mode: setup.mode,
+              formation: setup.formation?.map((value) =>
+                value === id ? null : value,
+              ),
             });
           }}
         />
@@ -839,6 +1148,10 @@ export default function App() {
           setSetup={setSetup}
           preset={preset}
           setPreset={setPreset}
+          mode={mode}
+          setMode={setMode}
+          difficulty={difficulty}
+          setDifficulty={setDifficulty}
           start={() => {
             setMatch(createMatch(defs, setup, preset));
             setPage("game");
@@ -850,6 +1163,8 @@ export default function App() {
           match={match}
           setMatch={setMatch}
           defs={defs}
+          mode={mode}
+          difficulty={difficulty}
           onExit={() => setPage("setup")}
         />
       )}

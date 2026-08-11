@@ -4,6 +4,9 @@ export type Role =
 export type Preset = "classic" | "royal-any" | "royal-all";
 export type Range = 1 | 2 | 3 | "slide";
 export type Usage = "both" | "move" | "capture";
+export type GameMode = "local" | "ai";
+export type AIDifficulty = "easy" | "normal" | "hard";
+export type FormationMode = "balanced" | "free";
 export interface Pos {
   row: number;
   col: number;
@@ -17,6 +20,8 @@ export interface Direction {
   vectors: Vec[];
   range: Range;
   usage?: Usage;
+  initialOnly?: boolean;
+  cannon?: boolean;
   jumpAllies?: boolean;
   jumpEnemies?: boolean;
   /** Version 1 compatibility. New definitions use jumpAllies/jumpEnemies. */
@@ -26,6 +31,7 @@ export interface Leap {
   kind: "leap";
   vectors: Vec[];
   usage?: Usage;
+  initialOnly?: boolean;
 }
 export type Pattern = Direction | Leap;
 export interface Definition {
@@ -54,6 +60,8 @@ export interface Setup {
   knight: string | null;
   bishop: string | null;
   queen: string | null;
+  mode?: FormationMode;
+  formation?: (string | null)[];
 }
 export interface Match {
   board: (Piece | null)[];

@@ -14,7 +14,9 @@ describe("App", () => {
     expect(
       screen.getByRole("heading", { name: "駒エディター" }),
     ).toBeInTheDocument();
-    expect(screen.getByText(/コスト/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: /コスト 0\/30/ }),
+    ).toBeInTheDocument();
   });
 
   it("edits a saved piece without creating another definition", () => {
@@ -35,7 +37,7 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: "変更を保存" }));
 
     expect(screen.getByText(/アーク改/)).toBeInTheDocument();
-    expect(screen.getByText("1/4種類")).toBeInTheDocument();
+    expect(screen.getByText("1/16種類")).toBeInTheDocument();
   });
 
   it("supports four movement sets and arbitrary leap targets", () => {
@@ -54,6 +56,37 @@ describe("App", () => {
     expect(screen.getByText("移動セット 4")).toBeInTheDocument();
   });
 
+  it("configures initial-only and cannon movement", () => {
+    render(<App />);
+    fireEvent.click(screen.getAllByRole("button", { name: "駒を作る" })[0]);
+    fireEvent.change(screen.getByLabelText("距離"), {
+      target: { value: "slide" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "前" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /初回限定/ }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /キャノン捕獲/ }));
+    expect(screen.getByText(/9\/30/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("checkbox", { name: /味方飛び越し/ }),
+    ).not.toBeChecked();
+    expect(
+      screen.getByRole("checkbox", { name: /敵飛び越し/ }),
+    ).not.toBeChecked();
+  });
+
+  it("shows reserved and available two-letter symbols", () => {
+    render(<App />);
+    fireEvent.click(screen.getAllByRole("button", { name: "駒を作る" })[0]);
+    const symbol = screen.getByLabelText("記号");
+    fireEvent.change(symbol, { target: { value: "kn" } });
+    expect(symbol).toHaveValue("KN");
+    expect(screen.getByText("標準駒の予約記号です。")).toBeInTheDocument();
+    fireEvent.change(symbol, { target: { value: "dr" } });
+    expect(symbol).toHaveValue("DR");
+    expect(screen.getByText("使用可能です。")).toBeInTheDocument();
+    expect(screen.getByText(/KI QU RO BI KN PO/)).toBeInTheDocument();
+  });
+
   it("shows the movement viewer during a match", () => {
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "対局設定" }));
@@ -65,5 +98,24 @@ describe("App", () => {
     expect(selector).toHaveValue("standard:king");
     fireEvent.change(selector, { target: { value: "standard:pawn" } });
     expect(screen.getByText(/初回の2マス移動/)).toBeInTheDocument();
+  });
+
+  it("switches between balanced and free formation modes", () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "対局設定" }));
+
+    expect(screen.getByLabelText("配置モード")).toHaveValue("balanced");
+    expect(screen.getByRole("button", { name: "編成 e1" })).toBeDisabled();
+    expect(
+      screen.getAllByRole("button", { name: /編成 [a-h][12]/ }),
+    ).toHaveLength(16);
+
+    fireEvent.change(screen.getByLabelText("配置モード"), {
+      target: { value: "free" },
+    });
+    expect(
+      screen.getByText("King以外・コスト30まで配置可能"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "対局開始" })).toBeEnabled();
   });
 });

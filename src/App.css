@@ -89,6 +89,59 @@ main > section {
   gap: 0.4rem;
   margin-bottom: 1rem;
 }
+.notice-inline {
+  background: #314539;
+  padding: 0.65rem;
+  border-radius: 6px;
+}
+.formation-editor {
+  display: grid;
+  grid-template-columns: minmax(320px, 2fr) minmax(220px, 1fr);
+  align-items: start;
+  gap: 1rem;
+  margin: 1rem 0;
+}
+.formation-grid {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  min-width: 0;
+  border: 2px solid #b7995b;
+}
+.formation-grid button {
+  min-width: 0;
+  width: 100%;
+  padding: 0.35rem 0.1rem;
+  border-radius: 0;
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  font-size: clamp(0.75rem, 2.2vw, 1.25rem);
+}
+.formation-grid button:nth-child(even),
+.formation-grid button:nth-child(n + 9):nth-child(odd) {
+  background: #314539;
+}
+.formation-grid button:nth-child(odd),
+.formation-grid button:nth-child(n + 9):nth-child(even) {
+  background: #1d2922;
+}
+.formation-grid button.selected-slot {
+  box-shadow: inset 0 0 0 4px #e0b544;
+}
+.formation-grid button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+.formation-grid small {
+  font-size: 0.6em;
+  color: #c9bfae;
+}
+.formation-control {
+  min-width: 0;
+  border: 1px solid #52675a;
+  border-radius: 8px;
+  padding: 1rem;
+}
 .form input,
 .form select,
 .setup select {
@@ -132,6 +185,14 @@ main > section {
 .preview .fixed-leap {
   box-shadow: inset 0 0 0 3px #d7bd80;
 }
+.preview .initial-only {
+  outline: 2px dashed #8ed1dc;
+  outline-offset: -4px;
+}
+.preview .cannon-range {
+  border-style: double;
+  border-width: 3px;
+}
 .preview .origin {
   background: #b7995b;
   color: #111;
@@ -155,6 +216,19 @@ main > section {
 .error {
   color: #ff8b7d;
 }
+.available {
+  color: #8bd49c;
+}
+.symbol-guide {
+  margin: -0.25rem 0 1rem;
+  padding: 0.7rem;
+  border: 1px solid #415347;
+  border-radius: 7px;
+  font-size: 0.9rem;
+}
+.symbol-guide p {
+  margin: 0.25rem 0;
+}
 .notice {
   max-width: 900px;
   margin: 1rem auto;
@@ -176,7 +250,8 @@ main > section {
   border: 0;
   border-radius: 0;
   aspect-ratio: 1;
-  font-size: 2rem;
+  font-size: clamp(0.85rem, 3.2vw, 1.65rem);
+  letter-spacing: -0.04em;
   font-weight: bold;
 }
 .board .light {
@@ -257,6 +332,12 @@ main > section {
 .legend-leap::before {
   border: 2px solid #d7bd80;
 }
+.legend-initial::before {
+  border: 2px dashed #8ed1dc;
+}
+.legend-cannon::before {
+  border: 3px double #ede7dc;
+}
 .pattern-list {
   display: grid;
   gap: 1rem;
@@ -310,5 +391,8 @@ main > section {
   }
   .preview {
     width: min(315px, 90vw);
+  }
+  .formation-editor {
+    grid-template-columns: 1fr;
   }
 }
