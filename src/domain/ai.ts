@@ -70,9 +70,23 @@ export function evaluate(match: Match, defs: Definition[]) {
 }
 
 const capturedValue = (match: Match, move: Move, defs: Definition[]) => {
-  const captured = match.board[idx(move.to)];
+  const afterFirst = move.next ? playFirst(match, move) : null;
+  const captured = move.next
+    ? (afterFirst!.board[idx(move.next.to)] ?? match.board[idx(move.to)])
+    : match.board[idx(move.to)];
   return captured ? pieceValue(captured, defs) : 0;
 };
+
+function playFirst(match: Match, move: Move) {
+  const board = [...match.board];
+  const piece = board[idx(move.from)]!;
+  if (move.stationary) board[idx(move.to)] = null;
+  else {
+    board[idx(move.from)] = null;
+    board[idx(move.to)] = { ...piece, moved: true };
+  }
+  return { ...match, board };
+}
 
 function ordered(match: Match, defs: Definition[]) {
   return allLegal(match, defs).sort(

@@ -3,7 +3,7 @@ export type Role =
   "king" | "queen" | "rook" | "bishop" | "knight" | "pawn" | "custom";
 export type Preset = "classic" | "royal-any" | "royal-all";
 export type Range = 1 | 2 | 3 | "slide";
-export type Usage = "both" | "move" | "capture";
+export type Usage = "both" | "move" | "capture" | "stationary";
 export type GameMode = "local" | "ai";
 export type AIDifficulty = "easy" | "normal" | "hard";
 export type FormationMode = "balanced" | "free";
@@ -21,9 +21,10 @@ export interface Direction {
   range: Range;
   usage?: Usage;
   initialOnly?: boolean;
+  phase?: 1 | 2;
   cannon?: boolean;
-  jumpAllies?: boolean;
-  jumpEnemies?: boolean;
+  jumpAllies?: 0 | 1 | 2 | boolean;
+  jumpEnemies?: 0 | 1 | 2 | boolean;
   /** Version 1 compatibility. New definitions use jumpAllies/jumpEnemies. */
   canJump?: boolean;
 }
@@ -32,6 +33,7 @@ export interface Leap {
   vectors: Vec[];
   usage?: Usage;
   initialOnly?: boolean;
+  phase?: 1 | 2;
 }
 export type Pattern = Direction | Leap;
 export interface Definition {
@@ -51,6 +53,8 @@ export interface Piece {
 export interface Move {
   from: Pos;
   to: Pos;
+  stationary?: boolean;
+  next?: Move;
   castle?: "king" | "queen";
   enPassant?: boolean;
   promotion?: boolean;

@@ -6,8 +6,15 @@ import {
   MAX_DEFINITIONS,
   normalize,
   RESERVED_SYMBOLS,
+  jumpLimit,
 } from "./domain/cost";
-import { createMatch, legal, pieceText, play } from "./domain/game";
+import {
+  createMatch,
+  inspectRange,
+  legal,
+  pieceText,
+  play,
+} from "./domain/game";
 import {
   crownCount as countCrowns,
   formationErrors,
@@ -20,6 +27,7 @@ import {
   directions,
   emptySetup,
   idx,
+  other,
   type Definition,
   type AIDifficulty,
   type GameMode,
@@ -34,6 +42,14 @@ import {
   type Vec,
 } from "./domain/types";
 import { download, load, parse, save } from "./infrastructure/storage";
+import {
+  chooseAutoImportFile,
+  clearAutoImportHandle,
+  getAutoImportHandle,
+  readAutoImportFile,
+  supportsAutoImport,
+  type AutoImportHandle,
+} from "./infrastructure/autoImport";
 type Page = "home" | "editor" | "setup" | "game";
 const blank = (): Definition => ({
   id: crypto.randomUUID(),
@@ -46,8 +62,9 @@ const blank = (): Definition => ({
       vectors: [],
       range: 1,
       usage: "both",
-      jumpAllies: false,
-      jumpEnemies: false,
+      phase: 1,
+      jumpAllies: 0,
+      jumpEnemies: 0,
     },
   ],
 });
@@ -61,14 +78,15 @@ const editable = (source: Definition): Definition => ({
           vectors: structuredClone(pattern.vectors),
           range: pattern.range,
           usage: pattern.usage ?? "both",
+          phase: pattern.phase ?? 1,
           initialOnly: pattern.initialOnly ?? false,
           cannon: pattern.cannon ?? false,
           jumpAllies:
             pattern.range !== 1 &&
-            (pattern.jumpAllies ?? pattern.canJump ?? false),
+            jumpLimit(pattern.jumpAllies, pattern.canJump),
           jumpEnemies:
             pattern.range !== 1 &&
-            (pattern.jumpEnemies ?? pattern.canJump ?? false),
+            jumpLimit(pattern.jumpEnemies, pattern.canJump),
         },
   ),
 });
@@ -202,8 +220,8 @@ function Editor({
                               usage: "both",
                               initialOnly: false,
                               cannon: false,
-                              jumpAllies: false,
-                              jumpEnemies: false,
+                              jumpAllies: 0,
+                              jumpEnemies: 0,
                             }
                           : {
                               kind: "leap",
@@ -230,7 +248,7 @@ function Editor({
                   </button>
                 </div>
                 <label>
-                  用途
+                  捕獲方式
                   <select
                     aria-label={`移動セット${index + 1}の用途`}
                     value={pattern.usage ?? "both"}
@@ -248,6 +266,27 @@ function Editor({
                     <option value="both">移動・捕獲</option>
                     <option value="move">移動専用</option>
                     <option value="capture">捕獲専用</option>
+                    <option value="stationary">静止捕獲</option>
+                  </select>
+                </label>
+                <label>
+                  移動回数
+                  <select
+                    aria-label={`移動セット${index + 1}の移動回数`}
+                    value={pattern.phase ?? 1}
+                    onChange={(event) =>
+                      updatePattern(index, {
+                        ...pattern,
+                        phase: Number(event.target.value) as 1 | 2,
+                        ...(pattern.kind === "direction" &&
+                        event.target.value === "2"
+                          ? { cannon: false }
+                          : {}),
+                      })
+                    }
+                  >
+                    <option value="1">1回目</option>
+                    <option value="2">2回目（追加コスト）</option>
                   </select>
                 </label>
                 <label>
@@ -313,43 +352,63 @@ function Editor({
                       ))}
                     </div>
                     <label>
-                      <input
-                        type="checkbox"
+                      味方飛び越し上限
+                      <select
                         disabled={pattern.range === 1}
-                        checked={pattern.range !== 1 && !!pattern.jumpAllies}
+                        value={
+                          pattern.range === 1
+                            ? 0
+                            : jumpLimit(pattern.jumpAllies, pattern.canJump)
+                        }
                         onChange={(x) =>
                           updatePattern(index, {
                             ...pattern,
-                            jumpAllies: x.target.checked,
-                            cannon: x.target.checked ? false : pattern.cannon,
+                            jumpAllies: Number(x.target.value) as 0 | 1 | 2,
+                            cannon: Number(x.target.value)
+                              ? false
+                              : pattern.cannon,
                             canJump: undefined,
                           })
                         }
-                      />
-                      味方飛び越し（基本+5、射程加算）
+                      >
+                        <option value="0">0枚</option>
+                        <option value="1">1枚</option>
+                        <option value="2">2枚</option>
+                      </select>
                     </label>
                     <label>
-                      <input
-                        type="checkbox"
+                      敵飛び越し上限
+                      <select
                         disabled={pattern.range === 1}
-                        checked={pattern.range !== 1 && !!pattern.jumpEnemies}
+                        value={
+                          pattern.range === 1
+                            ? 0
+                            : jumpLimit(pattern.jumpEnemies, pattern.canJump)
+                        }
                         onChange={(x) =>
                           updatePattern(index, {
                             ...pattern,
-                            jumpEnemies: x.target.checked,
-                            cannon: x.target.checked ? false : pattern.cannon,
+                            jumpEnemies: Number(x.target.value) as 0 | 1 | 2,
+                            cannon: Number(x.target.value)
+                              ? false
+                              : pattern.cannon,
                             canJump: undefined,
                           })
                         }
-                      />
-                      敵飛び越し（基本+5、射程加算は味方の2倍）
+                      >
+                        <option value="0">0枚</option>
+                        <option value="1">1枚</option>
+                        <option value="2">2枚</option>
+                      </select>
                     </label>
                     <label>
                       <input
                         type="checkbox"
                         disabled={
                           pattern.range === 1 ||
-                          (pattern.usage ?? "both") === "move"
+                          (pattern.usage ?? "both") === "move" ||
+                          (pattern.usage ?? "both") === "stationary" ||
+                          pattern.phase === 2
                         }
                         checked={!!pattern.cannon}
                         onChange={(event) =>
@@ -373,7 +432,7 @@ function Editor({
                   </>
                 ) : (
                   <>
-                    <p>到達地点を選択（1地点 +3）</p>
+                    <p>到達地点を選択（移動専用+2、その他+3／地点）</p>
                     <LeapPicker
                       pattern={pattern}
                       onToggle={(v) => toggle(index, v)}
@@ -414,10 +473,11 @@ function Editor({
                     vectors: [],
                     range: 1,
                     usage: "both",
+                    phase: 1,
                     initialOnly: false,
                     cannon: false,
-                    jumpAllies: false,
-                    jumpEnemies: false,
+                    jumpAllies: 0,
+                    jumpEnemies: 0,
                   },
                 ],
               })
@@ -523,6 +583,7 @@ function Preview({ d }: { d: Definition }) {
     {
       move: boolean;
       capture: boolean;
+      stationary: boolean;
       leap: boolean;
       initial: boolean;
       cannon: boolean;
@@ -536,6 +597,7 @@ function Preview({ d }: { d: Definition }) {
         const target = targets.get(key) ?? {
           move: false,
           capture: false,
+          stationary: false,
           leap: false,
           initial: false,
           cannon: false,
@@ -543,6 +605,7 @@ function Preview({ d }: { d: Definition }) {
         const usage = p.usage ?? "both";
         target.move ||= usage !== "capture";
         target.capture ||= usage !== "move";
+        target.stationary ||= usage === "stationary";
         target.leap ||= p.kind === "leap";
         target.initial ||= !!p.initialOnly;
         target.cannon ||= p.kind === "direction" && !!p.cannon;
@@ -563,7 +626,7 @@ function Preview({ d }: { d: Definition }) {
           : "";
         return (
           <span
-            className={`${origin ? "origin" : mode} ${target?.leap ? "fixed-leap" : ""} ${target?.initial ? "initial-only" : ""} ${target?.cannon ? "cannon-range" : ""}`}
+            className={`${origin ? "origin" : mode} ${target?.leap ? "fixed-leap" : ""} ${target?.initial ? "initial-only" : ""} ${target?.cannon ? "cannon-range" : ""} ${target?.stationary ? "stationary-capture" : ""}`}
             key={i}
           >
             {origin ? d.symbol || "駒" : ""}
@@ -863,6 +926,10 @@ function MovementViewer({ defs }: { defs: Definition[] }) {
   const cannon = guide.definition.patterns.some(
     (p) => p.kind === "direction" && p.cannon,
   );
+  const stationary = guide.definition.patterns.some(
+    (p) => (p.usage ?? "both") === "stationary",
+  );
+  const multiMove = guide.definition.patterns.some((p) => p.phase === 2);
   return (
     <div className="movement-viewer">
       <h3>駒の移動方法</h3>
@@ -899,6 +966,8 @@ function MovementViewer({ defs }: { defs: Definition[] }) {
       )}
       {initialOnly && <p>初回限定：未移動時だけ使用可能</p>}
       {cannon && <p>キャノン：スクリーン1枚を越えた最初の敵を捕獲</p>}
+      {stationary && <p>静止捕獲：対象だけを捕獲し、駒自身は移動しません。</p>}
+      {multiMove && <p>複数回移動：1回目の後に任意で2回目を実行できます。</p>}
       {guide.key === "standard:pawn" && (
         <p>初回の2マス移動とアンパッサンは盤上ルールとして適用されます。</p>
       )}
@@ -921,6 +990,13 @@ function Game({
   onExit: () => void;
 }) {
   const [selected, setSelected] = useState<Pos | null>(null);
+  const [inspected, setInspected] = useState<Pos | null>(null);
+  const [threatView, setThreatView] = useState<"off" | "turn" | "opponent">(
+    "off",
+  );
+  const [pending, setPending] = useState<
+    import("./domain/types").Move[] | null
+  >(null);
   const [thinking, setThinking] = useState(false);
   const [aiError, setAiError] = useState("");
   useEffect(() => {
@@ -969,19 +1045,73 @@ function Game({
   }, [match, defs, mode, difficulty, setMatch]);
   const locked = thinking || (mode === "ai" && match.turn === "black");
   const moves = selected ? legal(match, selected, defs) : [];
-  const targets = new Set(moves.map((m) => `${m.to.row},${m.to.col}`));
+  const targets = new Set(
+    pending
+      ? pending
+          .filter((m) => m.next)
+          .map((m) => `${m.next!.to.row},${m.next!.to.col}`)
+      : moves.map((m) => `${m.to.row},${m.to.col}`),
+  );
+  const inspectedMarks = new Map(
+    (inspected ? inspectRange(match, inspected, defs) : []).map((mark) => [
+      `${mark.to.row},${mark.to.col}`,
+      mark,
+    ]),
+  );
+  const threatColor =
+    threatView === "turn"
+      ? match.turn
+      : threatView === "opponent"
+        ? other(match.turn)
+        : null;
+  const threatenedSquares = new Set<string>();
+  if (threatColor && !inspected) {
+    match.board.forEach((piece, index) => {
+      if (piece?.color !== threatColor) return;
+      inspectRange(match, { row: Math.floor(index / 8), col: index % 8 }, defs)
+        .filter((mark) => mark.capture)
+        .forEach((mark) =>
+          threatenedSquares.add(`${mark.to.row},${mark.to.col}`),
+        );
+    });
+  }
   const click = (p: Pos) => {
-    if (locked) return;
-    if (selected) {
-      const move = moves.find((m) => m.to.row === p.row && m.to.col === p.col);
-      if (move) {
-        setMatch(play(match, move, defs));
+    const piece = match.board[idx(p)];
+    if (locked) {
+      setInspected(piece ? p : null);
+      return;
+    }
+    if (pending) {
+      const action = pending.find(
+        (move) => move.next?.to.row === p.row && move.next.to.col === p.col,
+      );
+      if (action) {
+        setMatch(play(match, action, defs));
+        setPending(null);
         setSelected(null);
+        setInspected(null);
+        return;
+      }
+      setPending(null);
+    }
+    if (selected) {
+      const candidates = moves.filter(
+        (m) => m.to.row === p.row && m.to.col === p.col,
+      );
+      if (candidates.length) {
+        const continuation = candidates.filter((move) => move.next);
+        if (continuation.length) {
+          setPending(candidates);
+          return;
+        }
+        setMatch(play(match, candidates[0], defs));
+        setSelected(null);
+        setInspected(null);
         return;
       }
     }
-    const piece = match.board[idx(p)];
     setSelected(piece?.color === match.turn ? p : null);
+    setInspected(piece ? p : null);
   };
   return (
     <section>
@@ -989,17 +1119,48 @@ function Game({
         <div>
           <h2>対局</h2>
           <p>{aiError || (thinking ? "AI思考中…" : match.message)}</p>
+          {pending && (
+            <p>2回目の移動先を選ぶか、「ここで手番終了」を選択してください。</p>
+          )}
         </div>
-        <button onClick={onExit}>終了</button>
+        <div className="range-controls">
+          <label>
+            効き表示
+            <select
+              aria-label="効き表示"
+              value={threatView}
+              onChange={(event) => {
+                setThreatView(event.target.value as typeof threatView);
+                setInspected(null);
+              }}
+            >
+              <option value="off">OFF</option>
+              <option value="turn">手番側</option>
+              <option value="opponent">相手側</option>
+            </select>
+          </label>
+          <button onClick={onExit}>終了</button>
+        </div>
       </div>
       <div className="game">
         <div className="board">
           {match.board.map((piece, i) => {
             const p = { row: Math.floor(i / 8), col: i % 8 };
+            const key = `${p.row},${p.col}`;
+            const mark = inspectedMarks.get(key);
+            const rangeClass = mark
+              ? mark.move && mark.capture
+                ? "range-both"
+                : mark.capture
+                  ? mark.stationary
+                    ? "range-stationary"
+                    : "range-capture"
+                  : "range-move"
+              : "";
             return (
               <button
                 aria-label={`${p.row},${p.col}`}
-                className={`${(p.row + p.col) % 2 ? "dark" : "light"} ${selected?.row === p.row && selected.col === p.col ? "selected" : ""} ${targets.has(`${p.row},${p.col}`) ? "move" : ""}`}
+                className={`${(p.row + p.col) % 2 ? "dark" : "light"} ${inspected?.row === p.row && inspected.col === p.col ? "selected" : ""} ${targets.has(key) ? "move" : ""} ${rangeClass} ${mark?.second ? "range-second" : ""} ${threatenedSquares.has(key) ? "threat" : ""}`}
                 onClick={() => click(p)}
                 aria-disabled={locked}
                 key={i}
@@ -1012,6 +1173,25 @@ function Game({
           })}
         </div>
         <aside className="panel">
+          <div className="range-legend" aria-label="範囲表示の凡例">
+            <span className="legend-range-move">移動</span>
+            <span className="legend-range-capture">捕獲</span>
+            <span className="legend-range-both">移動・捕獲</span>
+            <span className="legend-range-stationary">静止捕獲</span>
+            <span className="legend-range-second">2回目を含む</span>
+          </div>
+          {pending && (
+            <button
+              onClick={() => {
+                const stop = pending.find((move) => !move.next)!;
+                setMatch(play(match, stop, defs));
+                setPending(null);
+                setSelected(null);
+              }}
+            >
+              ここで手番終了
+            </button>
+          )}
           <MovementViewer defs={defs} />
           <h3>手の履歴</h3>
           <ol>
@@ -1063,7 +1243,10 @@ export default function App() {
     [difficulty, setDifficulty] = useState<AIDifficulty>("normal"),
     [page, setPage] = useState<Page>("home"),
     [match, setMatch] = useState<Match | null>(null),
-    [notice, setNotice] = useState("");
+    [notice, setNotice] = useState(""),
+    [autoHandle, setAutoHandle] = useState<AutoImportHandle | null>(null),
+    [autoPrompted, setAutoPrompted] = useState(false),
+    [showAutoPrompt, setShowAutoPrompt] = useState(false);
   const data: SaveData = { version: 1, definitions: defs, setup, preset };
   const importFile = async (f: File) => {
     try {
@@ -1074,6 +1257,61 @@ export default function App() {
       setNotice("読み込みました。");
     } catch (e) {
       setNotice(e instanceof Error ? e.message : "読み込みに失敗しました。");
+    }
+  };
+  useEffect(() => {
+    if (!supportsAutoImport()) return;
+    getAutoImportHandle()
+      .then((handle) => setAutoHandle(handle ?? null))
+      .catch(() =>
+        setNotice("自動読込ファイルの登録情報を確認できませんでした。"),
+      );
+  }, []);
+  useEffect(() => {
+    if (
+      autoHandle &&
+      !autoPrompted &&
+      (page === "editor" || page === "setup")
+    ) {
+      setAutoPrompted(true);
+      setShowAutoPrompt(true);
+    }
+  }, [autoHandle, autoPrompted, page]);
+  const registerAutoImport = async () => {
+    try {
+      const handle = await chooseAutoImportFile();
+      if (!handle) return;
+      setAutoHandle(handle);
+      setAutoPrompted(false);
+      setNotice(`${handle.name} を自動読込ファイルに指定しました。`);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : "ファイルを指定できませんでした。",
+      );
+    }
+  };
+  const importRegisteredFile = async () => {
+    if (!autoHandle) return;
+    setShowAutoPrompt(false);
+    try {
+      await importFile(await readAutoImportFile(autoHandle));
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : "自動読込に失敗しました。",
+      );
+    }
+  };
+  const unregisterAutoImport = async () => {
+    setShowAutoPrompt(false);
+    try {
+      await clearAutoImportHandle();
+      setAutoHandle(null);
+      setNotice("自動読込ファイルの登録を解除しました。");
+    } catch {
+      setNotice("自動読込ファイルの登録解除に失敗しました。");
     }
   };
   return (
@@ -1103,6 +1341,13 @@ export default function App() {
               保存
             </button>
             <button onClick={() => download(data)}>JSON出力</button>
+            {supportsAutoImport() && (
+              <button onClick={registerAutoImport}>
+                {autoHandle
+                  ? "自動読込ファイルを変更"
+                  : "自動読込ファイルを指定"}
+              </button>
+            )}
             <label className="file">
               JSON読込
               <input
@@ -1167,6 +1412,28 @@ export default function App() {
           difficulty={difficulty}
           onExit={() => setPage("setup")}
         />
+      )}
+      {showAutoPrompt && autoHandle && (
+        <div className="modal-backdrop" role="presentation">
+          <section
+            className="panel auto-import-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="auto-import-title"
+          >
+            <h2 id="auto-import-title">駒セットの自動読込</h2>
+            <p>{autoHandle.name} を読み込みますか？</p>
+            <div className="row">
+              <button autoFocus onClick={importRegisteredFile}>
+                はい
+              </button>
+              <button onClick={() => setShowAutoPrompt(false)}>
+                今回は読み込まない
+              </button>
+              <button onClick={unregisterAutoImport}>登録解除</button>
+            </div>
+          </section>
+        </div>
       )}
     </main>
   );

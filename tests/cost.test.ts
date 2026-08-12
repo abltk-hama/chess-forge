@@ -11,7 +11,6 @@ const make = (partial: Partial<Definition> = {}): Definition => ({
       kind: "direction",
       vectors: [{ dx: 1, dy: 0 }],
       range: 1,
-      canJump: false,
     },
   ],
   ...partial,
@@ -41,7 +40,7 @@ describe("cost", () => {
           ],
         }),
       ),
-    ).toBe(12);
+    ).toBe(15);
     expect(
       cost(
         make({
@@ -56,7 +55,7 @@ describe("cost", () => {
           ],
         }),
       ),
-    ).toBe(21);
+    ).toBe(24);
     expect(
       cost(
         make({
@@ -65,7 +64,7 @@ describe("cost", () => {
           ],
         }),
       ),
-    ).toBe(29);
+    ).toBe(31);
   });
 
   it("rejects cannon combined with move-only or free jumping", () => {
@@ -113,7 +112,7 @@ describe("cost", () => {
           patterns: [{ kind: "direction", vectors, range: 3, usage: "move" }],
         }),
       ),
-    ).toBe(6);
+    ).toBe(12);
     expect(
       cost(
         make({
@@ -122,7 +121,7 @@ describe("cost", () => {
           ],
         }),
       ),
-    ).toBe(9);
+    ).toBe(12);
     expect(
       cost(
         make({
@@ -132,6 +131,148 @@ describe("cost", () => {
         }),
       ),
     ).toBe(2);
+  });
+
+  it("prices stationary capture and second-phase movement", () => {
+    expect(
+      cost(
+        make({
+          patterns: [
+            {
+              kind: "leap",
+              vectors: [{ dx: 2, dy: 1 }],
+              usage: "stationary",
+            },
+          ],
+        }),
+      ),
+    ).toBe(3);
+    expect(
+      cost(
+        make({
+          patterns: [
+            {
+              kind: "direction",
+              vectors: [{ dx: 1, dy: 0 }],
+              range: 3,
+              usage: "move",
+              phase: 2,
+            },
+          ],
+        }),
+      ),
+    ).toBe(7);
+  });
+
+  it("prices movement squares, distance, and crossing limits", () => {
+    expect(
+      cost(
+        make({
+          patterns: [
+            {
+              kind: "direction",
+              vectors: [
+                { dx: -1, dy: -1 },
+                { dx: 0, dy: -1 },
+                { dx: 1, dy: -1 },
+              ],
+              range: 2,
+            },
+            {
+              kind: "direction",
+              vectors: [
+                { dx: -1, dy: 0 },
+                { dx: 1, dy: 0 },
+                { dx: 0, dy: 1 },
+              ],
+              range: 1,
+            },
+          ],
+        }),
+      ),
+    ).toBe(15);
+    expect(
+      cost(
+        make({
+          patterns: [
+            {
+              kind: "direction",
+              vectors: [{ dx: 1, dy: 0 }],
+              range: 3,
+              jumpAllies: 1,
+              jumpEnemies: 2,
+            },
+          ],
+        }),
+      ),
+    ).toBe(12);
+  });
+
+  it("prices slide once per piece plus each relative direction", () => {
+    const slide = (
+      vectors: Array<{ dx: number; dy: number }>,
+      phase?: 1 | 2,
+    ) => ({
+      kind: "direction" as const,
+      vectors,
+      range: "slide" as const,
+      usage: "both" as const,
+      phase,
+    });
+    expect(
+      cost(
+        make({
+          patterns: [
+            slide([
+              { dx: 0, dy: -1 },
+              { dx: 0, dy: 1 },
+              { dx: -1, dy: 0 },
+              { dx: 1, dy: 0 },
+            ]),
+          ],
+        }),
+      ),
+    ).toBe(22);
+    expect(
+      cost(
+        make({
+          patterns: [
+            slide([
+              { dx: -1, dy: -1 },
+              { dx: 1, dy: -1 },
+              { dx: -1, dy: 1 },
+              { dx: 1, dy: 1 },
+            ]),
+          ],
+        }),
+      ),
+    ).toBe(21);
+    expect(
+      cost(
+        make({
+          patterns: [
+            slide([{ dx: 0, dy: -1 }]),
+            {
+              kind: "direction",
+              vectors: [
+                { dx: -1, dy: 0 },
+                { dx: 1, dy: 0 },
+                { dx: 0, dy: 1 },
+              ],
+              range: 1,
+              usage: "both",
+            },
+          ],
+        }),
+      ),
+    ).toBe(14);
+    expect(
+      cost(
+        make({
+          patterns: [slide([{ dx: 0, dy: -1 }]), slide([{ dx: 0, dy: 1 }], 2)],
+        }),
+      ),
+    ).toBe(19);
   });
 
   it("prices ally and enemy jumping with separate range premiums", () => {

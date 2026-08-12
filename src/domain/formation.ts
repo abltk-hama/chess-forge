@@ -39,12 +39,12 @@ export function crownCount(formation: (string | null)[], defs: Definition[]) {
 }
 
 export function slotLimit(index: number) {
-  if (index >= 8) return 20;
+  if (index >= 8) return 15;
   const role = backRoles[index];
-  if (role === "knight") return 24;
+  if (role === "knight" || role === "bishop" || role === "rook") return 25;
   if (role === "queen") return 30;
   if (role === "king") return 0;
-  return 20;
+  return 25;
 }
 
 export function formationErrors(
@@ -84,12 +84,14 @@ export function formationErrors(
     const definition = defs.find((item) => item.id === id);
     return definition ? [definition] : [];
   });
-  if (pawnDefinitions.length > 2) errors.push("Pawn枠の変更は2か所までです。");
-  if (
-    pawnDefinitions.some((definition) => cost(definition) > 15) &&
-    pawnDefinitions.length > 1
-  )
-    errors.push("16～20点の駒をPawn枠へ置く場合、変更は1か所までです。");
+  const pawnBudget = pawnDefinitions.reduce(
+    (sum, definition) => sum + (cost(definition) <= 10 ? 1 : 2),
+    0,
+  );
+  if (pawnBudget > 4)
+    errors.push(
+      "Pawn枠の置換予算を超えています（10点以下=1、11～15点=2、予算4）。",
+    );
   if (pawnDefinitions.some((definition) => definition.isCrown))
     errors.push("バランス配置のPawn枠へCrownは配置できません。");
   return [...new Set(errors)];

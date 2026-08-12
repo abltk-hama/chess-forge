@@ -193,6 +193,9 @@ main > section {
   border-style: double;
   border-width: 3px;
 }
+.preview .stationary-capture {
+  box-shadow: inset 0 0 0 3px #e5944c;
+}
 .preview .origin {
   background: #b7995b;
   color: #111;
@@ -236,6 +239,22 @@ main > section {
   padding: 0.8rem;
   border-radius: 7px;
 }
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: #07100bcc;
+}
+.auto-import-dialog {
+  width: min(520px, 100%);
+  box-shadow: 0 1rem 3rem #0009;
+}
+.auto-import-dialog h2 {
+  margin-top: 0;
+}
 .file input {
   display: none;
 }
@@ -271,6 +290,71 @@ main > section {
   aspect-ratio: 1;
   border-radius: 50%;
   background: #d5a62d;
+}
+.board .range-move {
+  box-shadow: inset 0 0 0 5px #3f8fd2;
+}
+.board .range-capture {
+  box-shadow: inset 0 0 0 5px #cf4d4d;
+}
+.board .range-both {
+  box-shadow: inset 0 0 0 5px #8b5fc5;
+}
+.board .range-stationary {
+  box-shadow:
+    inset 0 0 0 5px #df3939,
+    inset 0 0 0 9px #f2d15c;
+}
+.board .range-second:before {
+  content: "2";
+  position: absolute;
+  top: 3px;
+  right: 5px;
+  color: #fff;
+  text-shadow: 0 1px 3px #000;
+  font-size: 0.7rem;
+}
+.board .threat {
+  background-image: linear-gradient(#d63d3d55, #d63d3d55);
+}
+.board button {
+  position: relative;
+}
+.range-controls,
+.range-legend {
+  display: flex;
+  gap: 0.7rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.range-controls label {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+.range-legend {
+  margin-bottom: 1rem;
+  font-size: 0.8rem;
+}
+.range-legend span {
+  border-left: 5px solid;
+  padding-left: 0.35rem;
+}
+.legend-range-move {
+  border-color: #3f8fd2 !important;
+}
+.legend-range-capture {
+  border-color: #cf4d4d !important;
+}
+.legend-range-both {
+  border-color: #8b5fc5 !important;
+}
+.legend-range-stationary {
+  border-color: #f2d15c !important;
+}
+.legend-range-second {
+  border-style: dashed !important;
+  border-color: #ddd !important;
 }
 .board .white {
   color: #fff;

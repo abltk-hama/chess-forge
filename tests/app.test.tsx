@@ -67,11 +67,11 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: /キャノン捕獲/ }));
     expect(screen.getByText(/9\/30/)).toBeInTheDocument();
     expect(
-      screen.getByRole("checkbox", { name: /味方飛び越し/ }),
-    ).not.toBeChecked();
+      screen.getByRole("combobox", { name: "味方飛び越し上限" }),
+    ).toHaveValue("0");
     expect(
-      screen.getByRole("checkbox", { name: /敵飛び越し/ }),
-    ).not.toBeChecked();
+      screen.getByRole("combobox", { name: "敵飛び越し上限" }),
+    ).toHaveValue("0");
   });
 
   it("shows reserved and available two-letter symbols", () => {
@@ -98,6 +98,25 @@ describe("App", () => {
     expect(selector).toHaveValue("standard:king");
     fireEvent.change(selector, { target: { value: "standard:pawn" } });
     expect(screen.getByText(/初回の2マス移動/)).toBeInTheDocument();
+  });
+
+  it("inspects enemy range and toggles side-wide threats", () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "対局設定" }));
+    fireEvent.click(screen.getByRole("button", { name: "対局開始" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "0,1" }));
+    expect(screen.getByRole("button", { name: "2,0" })).toHaveClass(
+      "range-both",
+    );
+
+    fireEvent.change(screen.getByLabelText("効き表示"), {
+      target: { value: "opponent" },
+    });
+    expect(screen.getByRole("button", { name: "2,0" })).toHaveClass("threat");
+    expect(screen.getByRole("button", { name: "0,1" })).not.toHaveClass(
+      "selected",
+    );
   });
 
   it("switches between balanced and free formation modes", () => {

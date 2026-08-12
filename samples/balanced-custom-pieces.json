@@ -1,0 +1,609 @@
+{
+  "version": 1,
+  "definitions": [
+    {
+      "id": "sample-guard-pawn",
+      "name": "ガードポーン",
+      "symbol": "GP",
+      "isCrown": false,
+      "patterns": [
+        {
+          "kind": "direction",
+          "vectors": [
+            {
+              "dx": 0,
+              "dy": -1
+            },
+            {
+              "dx": 1,
+              "dy": 0
+            },
+            {
+              "dx": 0,
+              "dy": 1
+            },
+            {
+              "dx": -1,
+              "dy": 0
+            }
+          ],
+          "range": 1,
+          "usage": "both",
+          "phase": 1,
+          "jumpAllies": 0,
+          "jumpEnemies": 0
+        },
+        {
+          "kind": "direction",
+          "vectors": [
+            {
+              "dx": 1,
+              "dy": -1
+            },
+            {
+              "dx": -1,
+              "dy": -1
+            }
+          ],
+          "range": 2,
+          "usage": "capture",
+          "phase": 1,
+          "jumpAllies": 0,
+          "jumpEnemies": 0
+        }
+      ]
+    },
+    {
+      "id": "sample-charger",
+      "name": "突撃兵",
+      "symbol": "CH",
+      "isCrown": false,
+      "patterns": [
+        {
+          "kind": "direction",
+          "vectors": [
+            {
+              "dx": 0,
+              "dy": -1
+            }
+          ],
+          "range": "slide",
+          "usage": "both",
+          "phase": 1,
+          "jumpAllies": 0,
+          "jumpEnemies": 0
+        },
+        {
+          "kind": "direction",
+          "vectors": [
+            {
+              "dx": 1,
+              "dy": 0
+            },
+            {
+              "dx": 0,
+              "dy": 1
+            },
+            {
+              "dx": -1,
+              "dy": 0
+            }
+          ],
+          "range": 1,
+          "usage": "both",
+          "phase": 1,
+          "jumpAllies": 0,
+          "jumpEnemies": 0
+        }
+      ]
+    },
+    {
+      "id": "sample-archer",
+      "name": "アーチャー",
+      "symbol": "AR",
+      "isCrown": false,
+      "patterns": [
+        {
+          "kind": "leap",
+          "vectors": [
+            {
+              "dy": -2,
+              "dx": -2
+            },
+            {
+              "dy": -2,
+              "dx": 2
+            }
+          ],
+          "usage": "stationary",
+          "phase": 1
+        },
+        {
+          "kind": "direction",
+          "vectors": [
+            {
+              "dx": 1,
+              "dy": -1
+            },
+            {
+              "dx": -1,
+              "dy": 1
+            },
+            {
+              "dx": -1,
+              "dy": -1
+            },
+            {
+              "dx": 1,
+              "dy": 1
+            }
+          ],
+          "range": 1,
+          "usage": "both",
+          "phase": 1,
+          "initialOnly": false,
+          "cannon": false,
+          "jumpAllies": 0,
+          "jumpEnemies": 0
+        }
+      ]
+    },
+    {
+      "id": "sample-knight",
+      "name": "ボウナイト",
+      "symbol": "BN",
+      "isCrown": false,
+      "patterns": [
+        {
+          "kind": "leap",
+          "vectors": [
+            {
+              "dy": -3,
+              "dx": 0
+            },
+            {
+              "dy": 3,
+              "dx": 0
+            }
+          ],
+          "usage": "stationary",
+          "phase": 1
+        },
+        {
+          "kind": "leap",
+          "vectors": [
+            {
+              "dy": 0,
+              "dx": -2
+            },
+            {
+              "dy": 0,
+              "dx": 2
+            },
+            {
+              "dy": -2,
+              "dx": 1
+            },
+            {
+              "dy": -2,
+              "dx": -1
+            },
+            {
+              "dy": 2,
+              "dx": -1
+            },
+            {
+              "dy": 2,
+              "dx": 1
+            }
+          ],
+          "usage": "both",
+          "initialOnly": false
+        }
+      ]
+    },
+    {
+      "id": "sample-bishop",
+      "name": "ソーサラー",
+      "symbol": "SO",
+      "isCrown": false,
+      "patterns": [
+        {
+          "kind": "direction",
+          "vectors": [
+            {
+              "dx": 1,
+              "dy": -1
+            },
+            {
+              "dx": 1,
+              "dy": 1
+            },
+            {
+              "dx": -1,
+              "dy": 1
+            },
+            {
+              "dx": -1,
+              "dy": -1
+            }
+          ],
+          "range": "slide",
+          "usage": "both",
+          "phase": 1,
+          "initialOnly": false,
+          "cannon": false,
+          "jumpAllies": 0,
+          "jumpEnemies": 0
+        },
+        {
+          "kind": "direction",
+          "vectors": [
+            {
+              "dx": 0,
+              "dy": -1
+            },
+            {
+              "dx": 0,
+              "dy": 1
+            },
+            {
+              "dx": -1,
+              "dy": 0
+            },
+            {
+              "dx": 1,
+              "dy": 0
+            }
+          ],
+          "range": 1,
+          "usage": "stationary",
+          "phase": 1,
+          "initialOnly": false,
+          "cannon": false,
+          "jumpAllies": false,
+          "jumpEnemies": false
+        }
+      ]
+    },
+    {
+      "id": "sample-rook",
+      "name": "フォートレス",
+      "symbol": "FO",
+      "isCrown": false,
+      "patterns": [
+        {
+          "kind": "direction",
+          "vectors": [
+            {
+              "dx": 0,
+              "dy": 1
+            },
+            {
+              "dx": 1,
+              "dy": 0
+            },
+            {
+              "dx": -1,
+              "dy": 0
+            }
+          ],
+          "range": "slide",
+          "usage": "move",
+          "phase": 1,
+          "initialOnly": false,
+          "cannon": false,
+          "jumpAllies": 0,
+          "jumpEnemies": 0
+        },
+        {
+          "kind": "direction",
+          "vectors": [
+            {
+              "dx": 0,
+              "dy": -1
+            }
+          ],
+          "range": 3,
+          "usage": "both",
+          "phase": 1,
+          "initialOnly": false,
+          "cannon": false,
+          "jumpAllies": 1,
+          "jumpEnemies": false
+        },
+        {
+          "kind": "direction",
+          "vectors": [
+            {
+              "dx": 0,
+              "dy": 1
+            },
+            {
+              "dx": 0,
+              "dy": -1
+            },
+            {
+              "dx": 1,
+              "dy": 0
+            },
+            {
+              "dx": -1,
+              "dy": 0
+            }
+          ],
+          "range": 1,
+          "usage": "both",
+          "phase": 1,
+          "initialOnly": false,
+          "cannon": false,
+          "jumpAllies": false,
+          "jumpEnemies": false
+        }
+      ]
+    },
+    {
+      "id": "sample-hit-away",
+      "name": "ヒット＆アウェイ",
+      "symbol": "HA",
+      "isCrown": false,
+      "patterns": [
+        {
+          "kind": "direction",
+          "vectors": [
+            {
+              "dx": 0,
+              "dy": -1
+            }
+          ],
+          "range": "slide",
+          "usage": "both",
+          "phase": 1,
+          "jumpAllies": 0,
+          "jumpEnemies": 0
+        },
+        {
+          "kind": "direction",
+          "vectors": [
+            {
+              "dx": 0,
+              "dy": 1
+            }
+          ],
+          "range": "slide",
+          "usage": "both",
+          "phase": 2,
+          "jumpAllies": 0,
+          "jumpEnemies": 0
+        }
+      ]
+    },
+    {
+      "id": "2dbcd494-d561-4ee5-8eee-6ea281cc0ee1",
+      "name": "麒麟",
+      "symbol": "KR",
+      "isCrown": false,
+      "patterns": [
+        {
+          "kind": "direction",
+          "vectors": [
+            {
+              "dx": 0,
+              "dy": -1
+            },
+            {
+              "dx": 0,
+              "dy": 1
+            },
+            {
+              "dx": 1,
+              "dy": 0
+            },
+            {
+              "dx": -1,
+              "dy": 0
+            }
+          ],
+          "range": 2,
+          "usage": "both",
+          "initialOnly": false,
+          "cannon": false,
+          "jumpAllies": 0,
+          "jumpEnemies": 0
+        },
+        {
+          "kind": "direction",
+          "vectors": [
+            {
+              "dx": 0,
+              "dy": -1
+            },
+            {
+              "dx": 0,
+              "dy": 1
+            },
+            {
+              "dx": 1,
+              "dy": -1
+            },
+            {
+              "dx": -1,
+              "dy": 0
+            },
+            {
+              "dx": 1,
+              "dy": 0
+            },
+            {
+              "dx": 1,
+              "dy": 1
+            },
+            {
+              "dx": -1,
+              "dy": -1
+            },
+            {
+              "dx": -1,
+              "dy": 1
+            }
+          ],
+          "range": 1,
+          "usage": "both",
+          "phase": 2,
+          "initialOnly": false,
+          "cannon": false,
+          "jumpAllies": 0,
+          "jumpEnemies": 0
+        }
+      ]
+    },
+    {
+      "id": "3b2180c9-8d64-427a-b09f-3bd2b56677d5",
+      "name": "アサルトポーン",
+      "symbol": "AP",
+      "isCrown": false,
+      "patterns": [
+        {
+          "kind": "direction",
+          "vectors": [
+            {
+              "dx": 0,
+              "dy": -1
+            }
+          ],
+          "range": 3,
+          "usage": "both",
+          "phase": 1,
+          "jumpAllies": 1,
+          "jumpEnemies": 0,
+          "initialOnly": true,
+          "cannon": false
+        },
+        {
+          "kind": "direction",
+          "vectors": [
+            {
+              "dx": 0,
+              "dy": -1
+            }
+          ],
+          "range": 2,
+          "usage": "capture",
+          "phase": 1,
+          "initialOnly": false,
+          "cannon": false,
+          "jumpAllies": 0,
+          "jumpEnemies": 0
+        },
+        {
+          "kind": "direction",
+          "vectors": [
+            {
+              "dx": 1,
+              "dy": 0
+            },
+            {
+              "dx": -1,
+              "dy": 0
+            }
+          ],
+          "range": 1,
+          "usage": "both",
+          "phase": 1,
+          "initialOnly": false,
+          "cannon": false,
+          "jumpAllies": 0,
+          "jumpEnemies": 0
+        }
+      ]
+    },
+    {
+      "id": "2e1062e3-026f-4702-90b6-08ab40589f6b",
+      "name": "ハイポーン",
+      "symbol": "HP",
+      "isCrown": false,
+      "patterns": [
+        {
+          "kind": "direction",
+          "vectors": [
+            {
+              "dx": 1,
+              "dy": 0
+            },
+            {
+              "dx": -1,
+              "dy": 0
+            }
+          ],
+          "range": "slide",
+          "usage": "capture",
+          "phase": 1,
+          "jumpAllies": 0,
+          "jumpEnemies": 0
+        },
+        {
+          "kind": "direction",
+          "vectors": [
+            {
+              "dx": 0,
+              "dy": -1
+            }
+          ],
+          "range": 2,
+          "usage": "move",
+          "phase": 1,
+          "initialOnly": false,
+          "cannon": false,
+          "jumpAllies": 0,
+          "jumpEnemies": 0
+        },
+        {
+          "kind": "direction",
+          "vectors": [
+            {
+              "dx": 0,
+              "dy": 1
+            },
+            {
+              "dx": 0,
+              "dy": -1
+            }
+          ],
+          "range": 1,
+          "usage": "both",
+          "phase": 1,
+          "initialOnly": false,
+          "cannon": false,
+          "jumpAllies": 0,
+          "jumpEnemies": 0
+        }
+      ]
+    }
+  ],
+  "setup": {
+    "rook": null,
+    "knight": null,
+    "bishop": null,
+    "queen": null,
+    "mode": "balanced",
+    "formation": [
+      "sample-rook",
+      "sample-knight",
+      "sample-bishop",
+      "2dbcd494-d561-4ee5-8eee-6ea281cc0ee1",
+      null,
+      "sample-bishop",
+      "sample-knight",
+      "sample-rook",
+      null,
+      "sample-guard-pawn",
+      null,
+      "3b2180c9-8d64-427a-b09f-3bd2b56677d5",
+      "3b2180c9-8d64-427a-b09f-3bd2b56677d5",
+      null,
+      "sample-guard-pawn",
+      null
+    ]
+  },
+  "preset": "classic"
+}

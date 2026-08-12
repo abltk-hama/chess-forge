@@ -58,29 +58,74 @@ describe("formation", () => {
   });
 
   it("enforces balanced slot and pawn limits", () => {
-    const low = definition("lo", 3);
-    const high = definition("hi", 4);
+    const low = definition("lo", 2, {
+      patterns: [
+        {
+          kind: "direction",
+          vectors: [
+            { dx: 1, dy: 0 },
+            { dx: -1, dy: 0 },
+          ],
+          range: 3,
+        },
+      ],
+    });
+    const high = definition("hi", 3, {
+      patterns: [
+        {
+          kind: "direction",
+          vectors: [
+            { dx: 1, dy: 0 },
+            { dx: -1, dy: 0 },
+            { dx: 0, dy: 1 },
+          ],
+          range: 2,
+        },
+      ],
+    });
     const formation = Array<string | null>(16).fill(null);
     formation[8] = low.id;
     formation[9] = low.id;
     expect(formationErrors(formation, "balanced", [low, high])).toEqual([]);
-    formation[8] = high.id;
+    formation[10] = low.id;
+    formation[11] = low.id;
+    formation[12] = low.id;
     expect(formationErrors(formation, "balanced", [low, high])).toContain(
-      "16～20点の駒をPawn枠へ置く場合、変更は1か所までです。",
+      "Pawn枠の置換予算を超えています（10点以下=1、11～15点=2、予算4）。",
     );
-    formation[9] = null;
-    formation[0] = definition("over", 5).id;
-    expect(
-      formationErrors(formation, "balanced", [
-        low,
-        high,
-        definition("over", 5),
-      ]),
-    ).toContain("rook枠のコスト上限を超えています。");
+    formation.fill(null);
+    formation[8] = high.id;
+    formation[9] = high.id;
+    expect(formationErrors(formation, "balanced", [low, high])).toEqual([]);
+    const over = definition("over", 6, {
+      patterns: [
+        {
+          kind: "leap",
+          vectors: Array.from({ length: 9 }, (_, index) => ({
+            dx: index + 1,
+            dy: 1,
+          })),
+        },
+      ],
+    });
+    formation[0] = over.id;
+    expect(formationErrors(formation, "balanced", [low, high, over])).toContain(
+      "rook枠のコスト上限を超えています。",
+    );
   });
 
   it("allows multiple crowns only in free formation", () => {
-    const crown = definition("cr", 1, { isCrown: true });
+    const crown = definition("cr", 1, {
+      isCrown: true,
+      patterns: [
+        {
+          kind: "direction",
+          vectors: [{ dx: 1, dy: 0 }],
+          range: 1,
+          initialOnly: true,
+        },
+      ],
+    });
     const formation = Array<string | null>(16).fill(null);
     formation[0] = crown.id;
     formation[1] = crown.id;
