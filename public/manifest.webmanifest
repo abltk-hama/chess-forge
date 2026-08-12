@@ -1,0 +1,20 @@
+{
+  "name": "Chess Forge",
+  "short_name": "Chess Forge",
+  "description": "オリジナル駒を作って遊べるチェス",
+  "lang": "ja",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#111714",
+  "theme_color": "#18231d",
+  "icons": [
+    {
+      "src": "app-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

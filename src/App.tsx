@@ -904,7 +904,13 @@ const standardGuides: { key: string; label: string; definition: Definition }[] =
     },
   }));
 
-function MovementViewer({ defs }: { defs: Definition[] }) {
+function MovementViewer({
+  defs,
+  heading = true,
+}: {
+  defs: Definition[];
+  heading?: boolean;
+}) {
   const guides = [
     ...standardGuides,
     ...defs.map((definition) => ({
@@ -932,7 +938,7 @@ function MovementViewer({ defs }: { defs: Definition[] }) {
   const multiMove = guide.definition.patterns.some((p) => p.phase === 2);
   return (
     <div className="movement-viewer">
-      <h3>駒の移動方法</h3>
+      {heading && <h3>駒の移動方法</h3>}
       <label>
         駒
         <select
@@ -1192,37 +1198,52 @@ function Game({
               ここで手番終了
             </button>
           )}
-          <MovementViewer defs={defs} />
-          <h3>手の履歴</h3>
-          <ol>
-            {match.history.map((x, i) => (
-              <li key={i}>{x}</li>
-            ))}
-          </ol>
-          <button
-            disabled={!!match.winner || match.draw || thinking}
-            onClick={() =>
-              setMatch({
-                ...match,
-                winner: match.turn === "white" ? "black" : "white",
-                message: "投了しました。",
-              })
-            }
-          >
-            投了
-          </button>
-          <button
-            disabled={!!match.winner || match.draw || thinking}
-            onClick={() =>
-              setMatch({
-                ...match,
-                draw: true,
-                message: "合意により引き分けです。",
-              })
-            }
-          >
-            引き分け
-          </button>
+          <details className="game-panel-section" open>
+            <summary>
+              <h3>駒の移動方法</h3>
+            </summary>
+            <MovementViewer defs={defs} heading={false} />
+          </details>
+          <details className="game-panel-section" open>
+            <summary>
+              <h3>手の履歴</h3>
+            </summary>
+            {match.history.length ? (
+              <ol>
+                {match.history.map((x, i) => (
+                  <li key={i}>{x}</li>
+                ))}
+              </ol>
+            ) : (
+              <p className="empty-history">まだ指し手はありません。</p>
+            )}
+          </details>
+          <div className="match-actions">
+            <button
+              disabled={!!match.winner || match.draw || thinking}
+              onClick={() =>
+                setMatch({
+                  ...match,
+                  winner: match.turn === "white" ? "black" : "white",
+                  message: "投了しました。",
+                })
+              }
+            >
+              投了
+            </button>
+            <button
+              disabled={!!match.winner || match.draw || thinking}
+              onClick={() =>
+                setMatch({
+                  ...match,
+                  draw: true,
+                  message: "合意により引き分けです。",
+                })
+              }
+            >
+              引き分け
+            </button>
+          </div>
         </aside>
       </div>
     </section>

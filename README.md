@@ -39,3 +39,7 @@ npm run lint
 ## サンプル駒セット
 
 `samples/balanced-custom-pieces.json` は、バランス配置制約内のサンプル10種類と編成を収録しています。
+
+## iPhone / PWA
+
+GitHub PagesなどのHTTPS環境で開くと、Safariの共有メニューからホーム画面へ追加できます。一度オンラインで起動すると、読み込まれたアプリ資産を使ってオフラインでも起動できます。iPhoneではJSONの手動入出力を利用し、Chromium専用の自動読込は表示されません。

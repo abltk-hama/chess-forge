@@ -8,8 +8,11 @@
 }
 body {
   margin: 0;
-  min-width: 360px;
+  min-width: 320px;
+  min-height: 100dvh;
+  padding-bottom: env(safe-area-inset-bottom);
   background: radial-gradient(circle at top, #26352c, #111714 55%);
+  -webkit-tap-highlight-color: transparent;
 }
 button,
 select,
@@ -37,7 +40,9 @@ header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 1rem 3vw;
+  padding: max(1rem, env(safe-area-inset-top))
+    max(3vw, env(safe-area-inset-right)) 1rem
+    max(3vw, env(safe-area-inset-left));
   border-bottom: 1px solid #435448;
   background: #121a16cc;
   position: sticky;
@@ -372,6 +377,40 @@ main > section {
   max-height: 610px;
   overflow: auto;
 }
+.game-panel-section {
+  border-top: 1px solid #52675a;
+  padding-top: 0.8rem;
+  margin-top: 0.8rem;
+}
+.game-panel-section summary {
+  color: #d7bd80;
+  cursor: pointer;
+  font-weight: 700;
+  margin-bottom: 0.8rem;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+}
+.game-panel-section summary h3 {
+  display: inline;
+  margin: 0;
+  font-size: 1rem;
+}
+.game-panel-section summary::marker {
+  color: #b7995b;
+}
+.game-panel-section .movement-viewer {
+  border-bottom: 0;
+  margin-bottom: 0;
+}
+.empty-history {
+  color: #b8c2bb;
+}
+.match-actions {
+  display: flex;
+  gap: 0.7rem;
+  margin-top: 1rem;
+}
 .movement-viewer {
   border-bottom: 1px solid #52675a;
   margin-bottom: 1rem;
@@ -462,21 +501,119 @@ main > section {
 }
 @media (max-width: 760px) {
   header {
-    align-items: flex-start;
-    gap: 1rem;
-    flex-direction: column;
+    align-items: center;
+    gap: 0.6rem;
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+  header h1 {
+    font-size: 1.35rem;
+  }
+  nav {
+    margin-left: auto;
+    gap: 0.3rem;
+  }
+  nav button {
+    min-height: 44px;
+    padding: 0.5rem 0.65rem;
+    font-size: 0.85rem;
+  }
+  main > section {
+    margin: 1rem auto;
+    padding: 0 max(0.55rem, env(safe-area-inset-left));
   }
   .editor,
   .game {
     grid-template-columns: 1fr;
   }
   .board {
-    grid-template-columns: repeat(8, minmax(35px, 11vw));
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+    width: 100%;
+    border-width: 3px;
+  }
+  .board button {
+    font-size: clamp(0.78rem, 5vw, 1.3rem);
+  }
+  .game-head {
+    align-items: flex-start;
+    gap: 0.6rem;
+  }
+  .game-head h2,
+  .game-head p {
+    margin-top: 0;
+    margin-bottom: 0.5rem;
+  }
+  .range-controls {
+    justify-content: flex-end;
+  }
+  .range-controls label {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.15rem;
+  }
+  .range-controls select,
+  .range-controls button,
+  .match-actions button,
+  .form input,
+  .form select,
+  .setup select {
+    min-height: 44px;
+  }
+  .game aside {
+    max-height: none;
+    padding: 0.85rem;
+  }
+  .range-legend {
+    gap: 0.45rem;
+    margin-bottom: 0.5rem;
+  }
+  .pattern-card {
+    padding: 0.75rem;
+  }
+  .pattern-head {
+    align-items: flex-start;
   }
   .preview {
     width: min(315px, 90vw);
   }
   .formation-editor {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 390px) {
+  header {
+    position: static;
+  }
+  nav {
+    width: 100%;
+  }
+  nav button {
+    flex: 1;
+    padding-inline: 0.3rem;
+  }
+  .game-head {
+    flex-direction: column;
+  }
+  .range-controls {
+    width: 100%;
+    justify-content: space-between;
+  }
+}
+
+@media (max-height: 500px) and (orientation: landscape) {
+  header {
+    position: static;
+    padding-block: 0.45rem;
+  }
+  main > section {
+    margin-block: 0.5rem;
+  }
+  .game {
+    grid-template-columns: minmax(320px, 1fr) minmax(260px, 0.85fr);
+  }
+  .game aside {
+    max-height: calc(100dvh - 7rem);
+    overflow: auto;
   }
 }
