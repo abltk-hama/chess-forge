@@ -13,7 +13,7 @@ import type {
 } from "./types";
 import { idx, inside, other } from "./types";
 import { formationFromSetup } from "./formation";
-import { jumpLimit } from "./cost";
+import { jumpLimit, transformedDefinition } from "./cost";
 import type { EvolutionCondition } from "./types";
 const back: Role[] = [
   "rook",
@@ -235,8 +235,11 @@ export function pseudo(
   const p = at(s, from);
   if (!p) return [];
   if (p.role !== "custom") return standard(s, from, p);
-  const d = defs.find((x) => x.id === p.definitionId);
-  if (!d) return [];
+  const source = defs.find((x) => x.id === p.definitionId);
+  if (!source) return [];
+  const d = p.evolved && source.transformation
+    ? transformedDefinition(source)
+    : source;
   const out: Move[] = [];
   for (const [patternIndex, pattern] of d.patterns.entries()) {
     if ((pattern.phase ?? 1) !== phase) continue;
@@ -249,7 +252,7 @@ export function pseudo(
         : pattern.range === "slide"
           ? 7
           : pattern.range;
-    const unlock = p.evolved ? d.growth?.unlocks[patternIndex] : undefined;
+    const unlock = p.evolved ? source.growth?.unlocks[patternIndex] : undefined;
     const usage =
       unlock?.capture && (pattern.usage ?? "both") === "move"
         ? "both"
@@ -545,10 +548,15 @@ function applyGrowth(match: Match, definitions: Definition[], statsSnapshot: Ret
   board.forEach((piece, index) => {
     if (!piece || piece.role !== "custom" || piece.evolved) return;
     const definition = definitions.find((item) => item.id === piece.definitionId);
-    if (!definition?.growth) return;
+    const evolution = definition?.growth ?? definition?.transformation;
+    if (!evolution) return;
     const position = { row: Math.floor(index / 8), col: index % 8 };
-    if (!conditionMet(definition.growth.condition, piece, position, match, statsSnapshot)) return;
-    board[index] = { ...piece, evolved: true };
+    if (!conditionMet(evolution.condition, piece, position, match, statsSnapshot)) return;
+    board[index] = {
+      ...piece,
+      evolved: true,
+      moved: definition?.transformation ? false : piece.moved,
+    };
     evolved[piece.color]++;
   });
   if (!evolved.white && !evolved.black) return match;
@@ -646,9 +654,12 @@ export function play(s: Match, m: Move, d: Definition[]) {
   return n;
 }
 export function pieceText(p: Piece, d: Definition[]) {
-  const t =
-    p.role === "custom"
-      ? d.find((x) => x.id === p.definitionId)?.symbol || "?"
-      : label[p.role];
+  const definition =
+    p.role === "custom" ? d.find((x) => x.id === p.definitionId) : undefined;
+  const t = definition
+    ? p.evolved && definition.transformation
+      ? definition.transformation.symbol
+      : definition.symbol
+    : label[p.role as Exclude<Role, "custom">] ?? "?";
   return p.color === "white" ? t : t.toLowerCase();
 }

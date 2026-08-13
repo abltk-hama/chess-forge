@@ -1,4 +1,9 @@
-import { cost, evolvedDefinition, growthCost } from "./cost";
+import {
+  cost,
+  evolvedDefinition,
+  growthCost,
+  transformedDefinition,
+} from "./cost";
 import { allLegal, isRoyal, play, threatened } from "./game";
 import {
   idx,
@@ -28,7 +33,9 @@ function pieceValue(piece: Piece, defs: Definition[]) {
   const definition = defs.find((item) => item.id === piece.definitionId);
   if (!definition) return 100;
   const valuedDefinition = piece.evolved
-    ? evolvedDefinition(definition)
+    ? definition.transformation
+      ? transformedDefinition(definition)
+      : evolvedDefinition(definition)
     : definition;
   const movementCost = piece.evolved
     ? cost({ ...valuedDefinition, isCrown: false })

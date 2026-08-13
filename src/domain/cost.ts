@@ -42,6 +42,28 @@ export function normalize(d: Definition): Definition {
     growth: d.growth
       ? { ...d.growth, unlocks: { ...d.growth.unlocks } }
       : undefined,
+    transformation: d.transformation
+      ? {
+          ...d.transformation,
+          name: d.transformation.name.trim(),
+          symbol: d.transformation.symbol.trim().toUpperCase().slice(0, 2),
+          patterns: d.transformation.patterns.map((pattern) => ({
+            ...pattern,
+            vectors: unique(pattern.vectors),
+          })),
+        }
+      : undefined,
+  };
+}
+export function transformedDefinition(d: Definition): Definition {
+  if (!d.transformation) return d;
+  return {
+    ...d,
+    name: d.transformation.name,
+    symbol: d.transformation.symbol,
+    patterns: d.transformation.patterns,
+    growth: undefined,
+    transformation: undefined,
   };
 }
 export function evolvedDefinition(d: Definition): Definition {
@@ -113,7 +135,13 @@ export function growthCost(d: Definition) {
   return { base, premium, total: base + premium, difficulty };
 }
 export const definitionCost = (definition: Definition) =>
-  growthCost(definition).total;
+  definition.growth
+    ? growthCost(definition).total
+    : cost({ ...definition, transformation: undefined });
+export function transformationLimit(d: Definition) {
+  if (!d.transformation) return 30;
+  return [30, 24, 26, 28, 29][conditionDifficulty(d.transformation.condition)];
+}
 export function cost(d: Definition) {
   if (
     d.patterns.some(
@@ -251,6 +279,14 @@ export function errors(d: Definition, all: Definition[] = []) {
     e.push("標準駒の予約記号は使用できません。");
   if (all.some((x) => x.id !== n.id && x.symbol.toUpperCase() === n.symbol))
     e.push("記号が重複しています。");
+  if (
+    all.some(
+      (x) =>
+        x.id !== n.id &&
+        x.transformation?.symbol.toUpperCase() === n.symbol,
+    )
+  )
+    e.push("通常記号が別の駒の変身後記号と重複しています。");
   if (n.patterns.length < 1 || n.patterns.length > 4)
     e.push("移動セットは1～4個です。");
   if (
@@ -327,6 +363,39 @@ export function errors(d: Definition, all: Definition[] = []) {
       )
         e.push("成長キャノンは2回目移動・飛び越しと併用できません。");
     }
+  }
+  if (n.growth && n.transformation)
+    e.push("成長と変身は同時に設定できません。");
+  if (n.transformation) {
+    const transformed = transformedDefinition(n);
+    if (!transformed.name || transformed.name.length > 20)
+      e.push("変身後名称は1～20文字です。");
+    if (!/^[A-Z]{1,2}$/.test(transformed.symbol))
+      e.push("変身後記号は英字1～2文字です。");
+    if ((RESERVED_SYMBOLS as readonly string[]).includes(transformed.symbol))
+      e.push("変身後記号に標準駒の予約記号は使用できません。");
+    if (transformed.symbol === n.symbol)
+      e.push("変身後記号は変身前と異なる記号にしてください。");
+    if (
+      all.some(
+        (item) =>
+          item.id !== n.id &&
+          (item.symbol.toUpperCase() === transformed.symbol ||
+            item.transformation?.symbol.toUpperCase() === transformed.symbol),
+      )
+    )
+      e.push("変身後記号が重複しています。");
+    if (transformed.patterns.length < 1 || transformed.patterns.length > 4)
+      e.push("変身後の移動セットは1～4個です。");
+    if (transformed.patterns.some((pattern) => !pattern.vectors.length))
+      e.push("変身後の各移動セットに移動先が必要です。");
+    const transformedPatternErrors = errors(
+      { ...transformed, id: `${n.id}:transformed`, symbol: "ZZ" },
+      [],
+    ).filter((message) => !message.includes("記号"));
+    e.push(...transformedPatternErrors.map((message) => `変身後：${message}`));
+    if (cost(transformed) > transformationLimit(n))
+      e.push(`変身後コストが上限${transformationLimit(n)}を超えています。`);
   }
   if (growthCost(n).total > 30) e.push("コストが30を超えています。");
   return e;

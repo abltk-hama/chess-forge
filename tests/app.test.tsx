@@ -86,6 +86,33 @@ describe("App", () => {
     expect(screen.getByText(/成長あり/)).toBeVisible();
   });
 
+  it("configures a transformed form", () => {
+    render(<App />);
+    fireEvent.click(screen.getAllByRole("button", { name: "駒を作る" })[0]);
+    fireEvent.change(screen.getByLabelText("名前"), {
+      target: { value: "変身兵" },
+    });
+    fireEvent.change(screen.getByLabelText("記号"), {
+      target: { value: "TF" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "前" }));
+    fireEvent.change(screen.getByLabelText("進化方式"), {
+      target: { value: "transformation" },
+    });
+    fireEvent.change(screen.getByLabelText("変身後名称"), {
+      target: { value: "変身後" },
+    });
+    fireEvent.change(screen.getByLabelText("変身後記号"), {
+      target: { value: "TA" },
+    });
+    fireEvent.click(screen.getAllByRole("button", { name: "前" }).at(-1)!);
+
+    expect(screen.getByText(/変身前 \d+／30・変身後/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "保存" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    expect(screen.getByText(/変身あり/)).toBeVisible();
+  });
+
   it("configures initial-only and cannon movement", () => {
     render(<App />);
     fireEvent.click(screen.getAllByRole("button", { name: "駒を作る" })[0]);

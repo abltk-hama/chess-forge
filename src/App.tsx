@@ -8,6 +8,8 @@ import {
   MAX_DEFINITIONS,
   normalize,
   RESERVED_SYMBOLS,
+  transformedDefinition,
+  transformationLimit,
   jumpLimit,
 } from "./domain/cost";
 import {
@@ -311,6 +313,238 @@ function ThresholdSelect({
         ))}
       </select>
     </label>
+  );
+}
+function TransformationPatterns({
+  patterns,
+  onChange,
+}: {
+  patterns: Definition["patterns"];
+  onChange: (patterns: Definition["patterns"]) => void;
+}) {
+  const update = (index: number, pattern: Definition["patterns"][number]) =>
+    onChange(patterns.map((item, i) => (i === index ? pattern : item)));
+  const toggleVector = (index: number, vector: Vec) => {
+    const pattern = patterns[index],
+      selected = pattern.vectors.some(
+        (item) => item.dx === vector.dx && item.dy === vector.dy,
+      );
+    update(index, {
+      ...pattern,
+      vectors: selected
+        ? pattern.vectors.filter(
+            (item) => item.dx !== vector.dx || item.dy !== vector.dy,
+          )
+        : [...pattern.vectors, vector],
+    });
+  };
+  return (
+    <div className="transformation-patterns">
+      {patterns.map((pattern, index) => (
+        <fieldset className="growth-unlock" key={index}>
+          <legend>変身後セット {index + 1}</legend>
+          <label>
+            種類
+            <select
+              aria-label={`変身後セット${index + 1}の種類`}
+              value={pattern.kind}
+              onChange={(event) =>
+                update(
+                  index,
+                  event.target.value === "direction"
+                    ? {
+                        kind: "direction",
+                        vectors: [],
+                        range: 1,
+                        usage: "both",
+                      }
+                    : { kind: "leap", vectors: [], usage: "both" },
+                )
+              }
+            >
+              <option value="direction">方向移動</option>
+              <option value="leap">固定跳躍</option>
+            </select>
+          </label>
+          <label>
+            捕獲方式
+            <select
+              aria-label={`変身後セット${index + 1}の用途`}
+              value={pattern.usage ?? "both"}
+              onChange={(event) =>
+                update(index, {
+                  ...pattern,
+                  usage: event.target.value as Usage,
+                  ...(pattern.kind === "direction" &&
+                  ["move", "stationary"].includes(event.target.value)
+                    ? { cannon: false }
+                    : {}),
+                })
+              }
+            >
+              <option value="both">移動・捕獲</option>
+              <option value="move">移動専用</option>
+              <option value="capture">捕獲専用</option>
+              <option value="stationary">静止捕獲</option>
+            </select>
+          </label>
+          <label>
+            移動回数
+            <select
+              aria-label={`変身後セット${index + 1}の移動回数`}
+              value={pattern.phase ?? 1}
+              onChange={(event) =>
+                update(index, {
+                  ...pattern,
+                  phase: Number(event.target.value) as 1 | 2,
+                  ...(pattern.kind === "direction" && event.target.value === "2"
+                    ? { cannon: false }
+                    : {}),
+                })
+              }
+            >
+              <option value="1">1回目</option>
+              <option value="2">2回目</option>
+            </select>
+          </label>
+          <label>
+            <input
+              type="checkbox"
+              checked={!!pattern.initialOnly}
+              onChange={(event) =>
+                update(index, { ...pattern, initialOnly: event.target.checked })
+              }
+            />
+            初回限定
+          </label>
+          {pattern.kind === "direction" ? (
+            <>
+              <label>
+                距離
+                <select
+                  aria-label={`変身後セット${index + 1}の距離`}
+                  value={pattern.range}
+                  onChange={(event) =>
+                    update(index, {
+                      ...pattern,
+                      range: (event.target.value === "slide"
+                        ? "slide"
+                        : Number(event.target.value)) as Range,
+                      ...(event.target.value === "1"
+                        ? {
+                            cannon: false,
+                            jumpAllies: 0,
+                            jumpEnemies: 0,
+                          }
+                        : {}),
+                    })
+                  }
+                >
+                  <option value="1">1</option>
+                  <option value="2">2</option>
+                  <option value="3">3</option>
+                  <option value="slide">スライド</option>
+                </select>
+              </label>
+              <div className="checks">
+                {directions.map((vector, directionIndex) => (
+                  <button
+                    type="button"
+                    className={
+                      pattern.vectors.some(
+                        (item) =>
+                          item.dx === vector.dx && item.dy === vector.dy,
+                      )
+                        ? "active"
+                        : ""
+                    }
+                    onClick={() => toggleVector(index, vector)}
+                    key={directionIndex}
+                  >
+                    {dirNames[directionIndex]}
+                  </button>
+                ))}
+              </div>
+              <label>
+                味方飛び越し
+                <select
+                  disabled={pattern.range === 1 || !!pattern.cannon}
+                  value={jumpLimit(pattern.jumpAllies, pattern.canJump)}
+                  onChange={(event) =>
+                    update(index, {
+                      ...pattern,
+                      jumpAllies: Number(event.target.value) as 0 | 1 | 2,
+                    })
+                  }
+                >
+                  <option value="0">なし</option>
+                  <option value="1">1枚</option>
+                  <option value="2">2枚</option>
+                </select>
+              </label>
+              <label>
+                敵飛び越し
+                <select
+                  disabled={pattern.range === 1 || !!pattern.cannon}
+                  value={jumpLimit(pattern.jumpEnemies, pattern.canJump)}
+                  onChange={(event) =>
+                    update(index, {
+                      ...pattern,
+                      jumpEnemies: Number(event.target.value) as 0 | 1 | 2,
+                    })
+                  }
+                >
+                  <option value="0">なし</option>
+                  <option value="1">1枚</option>
+                  <option value="2">2枚</option>
+                </select>
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  disabled={
+                    pattern.range === 1 ||
+                    pattern.phase === 2 ||
+                    ["move", "stationary"].includes(pattern.usage ?? "both") ||
+                    !!pattern.jumpAllies ||
+                    !!pattern.jumpEnemies
+                  }
+                  checked={!!pattern.cannon}
+                  onChange={(event) =>
+                    update(index, { ...pattern, cannon: event.target.checked })
+                  }
+                />
+                キャノン捕獲
+              </label>
+            </>
+          ) : (
+            <LeapPicker
+              pattern={pattern}
+              onToggle={(vector) => toggleVector(index, vector)}
+            />
+          )}
+          <button
+            type="button"
+            disabled={patterns.length === 1}
+            onClick={() => onChange(patterns.filter((_, i) => i !== index))}
+          >
+            セット削除
+          </button>
+        </fieldset>
+      ))}
+      <button
+        type="button"
+        disabled={patterns.length >= 4}
+        onClick={() =>
+          onChange([
+            ...patterns,
+            { kind: "direction", vectors: [], range: 1, usage: "both" },
+          ])
+        }
+      >
+        変身後セットを追加
+      </button>
+    </div>
   );
 }
 function Editor({
@@ -747,7 +981,7 @@ function Editor({
               進化方式
               <select
                 aria-label="進化方式"
-                value={d.growth ? "growth" : "none"}
+                value={d.growth ? "growth" : d.transformation ? "transformation" : "none"}
                 onChange={(event) =>
                   setD({
                     ...d,
@@ -762,11 +996,32 @@ function Editor({
                             unlocks: {},
                           }
                         : undefined,
+                    transformation:
+                      event.target.value === "transformation"
+                        ? {
+                            condition: {
+                              kind: "captures",
+                              subject: "self",
+                              threshold: 1,
+                            },
+                            name: "",
+                            symbol: "",
+                            patterns: [
+                              {
+                                kind: "direction",
+                                vectors: [],
+                                range: 1,
+                                usage: "both",
+                              },
+                            ],
+                          }
+                        : undefined,
                   })
                 }
               >
                 <option value="none">なし</option>
                 <option value="growth">成長</option>
+                <option value="transformation">変身</option>
               </select>
             </label>
             {d.growth && (
@@ -930,6 +1185,101 @@ function Editor({
                 })}
               </>
             )}
+            {d.transformation && (
+              <>
+                <label>
+                  条件カテゴリー
+                  <select
+                    aria-label="変身条件カテゴリー"
+                    value={d.transformation.condition.kind}
+                    onChange={(event) => {
+                      const kind = event.target.value;
+                      const condition: EvolutionCondition =
+                        kind === "losses"
+                          ? { kind, threshold: 2 }
+                          : kind === "territory"
+                            ? { kind, subject: "self", depth: 3 }
+                            : kind === "evolutions"
+                              ? { kind, side: "ally", threshold: 1 }
+                              : kind === "nearbyEnemies"
+                                ? {
+                                    kind,
+                                    center: "self",
+                                    radius: 1,
+                                    threshold: 1,
+                                  }
+                                : {
+                                    kind: "captures",
+                                    subject: "self",
+                                    threshold: 1,
+                                  };
+                      setD({
+                        ...d,
+                        transformation: { ...d.transformation!, condition },
+                      });
+                    }}
+                  >
+                    <option value="captures">捕獲数</option>
+                    <option value="losses">自陣営の損失数</option>
+                    <option value="territory">敵陣到達</option>
+                    <option value="evolutions">進化数</option>
+                    <option value="nearbyEnemies">周辺の敵数</option>
+                  </select>
+                </label>
+                <GrowthConditionFields
+                  condition={d.transformation.condition}
+                  onChange={(condition) =>
+                    setD({
+                      ...d,
+                      transformation: { ...d.transformation!, condition },
+                    })
+                  }
+                />
+                <label>
+                  変身後名称
+                  <input
+                    aria-label="変身後名称"
+                    maxLength={20}
+                    value={d.transformation.name}
+                    onChange={(event) =>
+                      setD({
+                        ...d,
+                        transformation: {
+                          ...d.transformation!,
+                          name: event.target.value,
+                        },
+                      })
+                    }
+                  />
+                </label>
+                <label>
+                  変身後記号
+                  <input
+                    aria-label="変身後記号"
+                    maxLength={2}
+                    value={d.transformation.symbol}
+                    onChange={(event) =>
+                      setD({
+                        ...d,
+                        transformation: {
+                          ...d.transformation!,
+                          symbol: event.target.value.toUpperCase(),
+                        },
+                      })
+                    }
+                  />
+                </label>
+                <TransformationPatterns
+                  patterns={d.transformation.patterns}
+                  onChange={(patterns) =>
+                    setD({
+                      ...d,
+                      transformation: { ...d.transformation!, patterns },
+                    })
+                  }
+                />
+              </>
+            )}
           </fieldset>
         </div>
         <div className="panel">
@@ -940,6 +1290,13 @@ function Editor({
             <p>
               通常 {growthPricing.base} + 成長 {growthPricing.premium}（難度
               {growthPricing.difficulty}）
+            </p>
+          )}
+          {d.transformation && (
+            <p>
+              変身前 {definitionCost(d)}／30・変身後{" "}
+              {definitionCost(transformedDefinition(d))}/
+              {transformationLimit(d)}
             </p>
           )}
           <Preview d={d} />
@@ -974,6 +1331,7 @@ function Editor({
             <span>
               {definitionCost(x)}/30 {x.isCrown ? "♛王冠" : ""}{" "}
               {x.growth ? "成長あり" : ""}{" "}
+              {x.transformation ? "変身あり" : ""}{" "}
               {usesLegacyJump(x) ? "旧コスト" : ""}
             </span>
             <button onClick={() => setD(editable(x))}>編集</button>
@@ -1206,11 +1564,17 @@ function PositionEditor({
         <label className="inline-check">
           <input
             type="checkbox"
-            disabled={erasing || !selectedCustom?.growth}
-            checked={evolved && !!selectedCustom?.growth}
+            disabled={
+              erasing ||
+              (!selectedCustom?.growth && !selectedCustom?.transformation)
+            }
+            checked={
+              evolved &&
+              !!(selectedCustom?.growth || selectedCustom?.transformation)
+            }
             onChange={(event) => setEvolved(event.target.checked)}
           />
-          成長済みとして配置
+          進化済みとして配置
         </label>
         <div className="position-tool-actions">
           <button
@@ -1537,9 +1901,9 @@ function conditionDescription(condition: EvolutionCondition) {
     return `${condition.side === "ally" ? "味方" : "相手"}が${condition.threshold}体進化`;
   return `${condition.center === "self" ? "この駒" : "King"}の${condition.radius * 2 + 1}×${condition.radius * 2 + 1}以内に敵${condition.threshold}体`;
 }
-function growthProgress(piece: NonNullable<Match["board"][number]>, match: Match, definition: Definition) {
+function evolutionProgress(piece: NonNullable<Match["board"][number]>, match: Match, definition: Definition) {
   if (piece.evolved) return "達成済み";
-  const condition = definition.growth!.condition,
+  const condition = (definition.growth ?? definition.transformation)!.condition,
     stats = match.stats?.[piece.color],
     enemyStats = match.stats?.[other(piece.color)];
   if (condition.kind === "captures")
@@ -1656,8 +2020,10 @@ function MovementViewer({
   const guide = guides.find((item) => item.key === selected) ?? guides[0];
   const [showGrowth, setShowGrowth] = useState(false);
   const shownDefinition =
-    showGrowth && guide.definition.growth
-      ? evolvedDefinition(guide.definition)
+    showGrowth && (guide.definition.growth || guide.definition.transformation)
+      ? guide.definition.transformation
+        ? transformedDefinition(guide.definition)
+        : evolvedDefinition(guide.definition)
       : guide.definition;
   const custom = !guide.key.startsWith("standard:");
   const allyJump = shownDefinition.patterns.some(
@@ -1691,7 +2057,7 @@ function MovementViewer({
           ))}
         </select>
       </label>
-      {guide.definition.growth && (
+      {(guide.definition.growth || guide.definition.transformation) && (
         <label>
           表示状態
           <select
@@ -1699,8 +2065,8 @@ function MovementViewer({
             value={showGrowth ? "after" : "before"}
             onChange={(event) => setShowGrowth(event.target.value === "after")}
           >
-            <option value="before">成長前</option>
-            <option value="after">成長後</option>
+            <option value="before">進化前</option>
+            <option value="after">進化後</option>
           </select>
         </label>
       )}
@@ -1717,6 +2083,14 @@ function MovementViewer({
       {guide.definition.isCrown && <p>♛ Crown</p>}
       {guide.definition.growth && (
         <p>成長条件：{conditionDescription(guide.definition.growth.condition)}</p>
+      )}
+      {guide.definition.transformation && (
+        <p>
+          変身条件：{conditionDescription(guide.definition.transformation.condition)}
+          <br />
+          変身後：{guide.definition.transformation.symbol}{" "}
+          {guide.definition.transformation.name}
+        </p>
       )}
       {(allyJump || enemyJump) && (
         <p>
@@ -1996,14 +2370,21 @@ function Game({
               const definition = defs.find(
                 (item) => item.id === inspectedPiece.definitionId,
               );
-              return definition?.growth ? (
+              const evolution = definition?.growth ?? definition?.transformation;
+              return evolution ? (
                 <div className="growth-status">
                   <strong>
-                    {inspectedPiece.evolved ? "成長済み" : "成長進捗"}
+                    {inspectedPiece.evolved
+                      ? definition?.transformation
+                        ? "変身済み"
+                        : "成長済み"
+                      : definition?.transformation
+                        ? "変身進捗"
+                        : "成長進捗"}
                   </strong>
-                  <p>{conditionDescription(definition.growth.condition)}</p>
+                  <p>{conditionDescription(evolution.condition)}</p>
                   <p>
-                    進捗：{growthProgress(inspectedPiece, match, definition)}
+                    進捗：{evolutionProgress(inspectedPiece, match, definition!)}
                   </p>
                 </div>
               ) : null;

@@ -37,6 +37,12 @@ export interface Growth {
   unlockCrown?: boolean;
   unlocks: Record<number, GrowthUnlock>;
 }
+export interface Transformation {
+  condition: EvolutionCondition;
+  name: string;
+  symbol: string;
+  patterns: Pattern[];
+}
 export type GameMode = "local" | "ai";
 export type AIDifficulty = "easy" | "normal" | "hard";
 export type FormationMode = "balanced" | "free";
@@ -78,6 +84,7 @@ export interface Definition {
   patterns: Pattern[];
   isCrown: boolean;
   growth?: Growth;
+  transformation?: Transformation;
 }
 export interface Piece {
   id: string;
