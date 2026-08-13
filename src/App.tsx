@@ -11,6 +11,7 @@ import {
   transformedDefinition,
   transformationLimit,
   summonLimit,
+  summonedDefinition,
   jumpLimit,
 } from "./domain/cost";
 import {
@@ -2063,8 +2064,10 @@ function MovementViewer({
   const guide = guides.find((item) => item.key === selected) ?? guides[0];
   const [showGrowth, setShowGrowth] = useState(false);
   const shownDefinition =
-    showGrowth && (guide.definition.growth || guide.definition.transformation)
-      ? guide.definition.transformation
+    showGrowth && (guide.definition.growth || guide.definition.transformation || guide.definition.summoning)
+      ? guide.definition.summoning
+        ? summonedDefinition(guide.definition)
+        : guide.definition.transformation
         ? transformedDefinition(guide.definition)
         : evolvedDefinition(guide.definition)
       : guide.definition;
@@ -2100,7 +2103,7 @@ function MovementViewer({
           ))}
         </select>
       </label>
-      {(guide.definition.growth || guide.definition.transformation) && (
+      {(guide.definition.growth || guide.definition.transformation || guide.definition.summoning) && (
         <label>
           表示状態
           <select
@@ -2109,7 +2112,7 @@ function MovementViewer({
             onChange={(event) => setShowGrowth(event.target.value === "after")}
           >
             <option value="before">進化前</option>
-            <option value="after">進化後</option>
+            <option value="after">{guide.definition.summoning ? "派生駒" : "進化後"}</option>
           </select>
         </label>
       )}
@@ -2133,6 +2136,17 @@ function MovementViewer({
           <br />
           変身後：{guide.definition.transformation.symbol}{" "}
           {guide.definition.transformation.name}
+        </p>
+      )}
+      {guide.definition.summoning && (
+        <p>
+          召喚条件：{conditionDescription(guide.definition.summoning.condition)}
+          <br />
+          発動方式：{{ summon: "通常召喚", inherit: "継承", split: "分裂" }[guide.definition.summoning.timing]}
+          <br />
+          配置範囲：{guide.definition.summoning.range === "movement" ? "1回目の移動範囲" : "周囲8マス"}
+          <br />
+          派生駒：{guide.definition.summoning.symbol} {guide.definition.summoning.name}（上限{summonLimit(guide.definition)}）
         </p>
       )}
       {(allyJump || enemyJump) && (

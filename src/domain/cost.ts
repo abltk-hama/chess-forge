@@ -74,7 +74,9 @@ export function summonedDefinition(d: Definition): Definition {
   return { ...d, name: d.summoning.name, symbol: d.summoning.symbol, patterns: d.summoning.patterns, isCrown: false, growth: undefined, transformation: undefined, summoning: undefined };
 }
 export const SUMMON_LIMITS = {
-  summon: [0, 13, 15, 17, 20], inherit: [0, 8, 10, 12, 15], split: [0, 5, 7, 9, 10],
+  summon: [0, 11, 13, 15, 18],
+  inherit: [0, 11, 13, 15, 18],
+  split: [0, 7, 9, 11, 12],
 } as const;
 export function summonLimit(d: Definition) {
   return d.summoning ? SUMMON_LIMITS[d.summoning.timing][conditionDifficulty(d.summoning.condition)] : 0;
@@ -152,7 +154,7 @@ export function growthCost(d: Definition) {
 export const definitionCost = (definition: Definition) =>
   definition.growth
     ? growthCost(definition).total
-    : cost({ ...definition, transformation: undefined, summoning: undefined }) + (definition.summoning ? (definition.summoning.timing === "summon" ? 5 : 3) + (definition.summoning.range === "movement" ? 3 : 0) : 0);
+    : cost({ ...definition, transformation: undefined, summoning: undefined }) + (definition.summoning ? (definition.summoning.timing === "split" ? 0 : 5) + (definition.summoning.range === "movement" ? 3 : 0) : 0);
 export function transformationLimit(d: Definition) {
   if (!d.transformation) return 30;
   return [30, 24, 26, 28, 29][conditionDifficulty(d.transformation.condition)];

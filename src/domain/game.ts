@@ -604,7 +604,7 @@ function applyGrowth(match: Match, definitions: Definition[], statsSnapshot: Ret
   const board = [...match.board],
     evolved = { white: 0, black: 0 };
   board.forEach((piece, index) => {
-    if (!piece || piece.role !== "custom" || piece.evolved) return;
+    if (!piece || piece.role !== "custom" || piece.evolved || piece.summoned) return;
     const definition = definitions.find((item) => item.id === piece.definitionId);
     const evolution = definition?.growth ?? definition?.transformation ?? definition?.summoning;
     if (!evolution) return;
@@ -694,7 +694,7 @@ export function play(s: Match, m: Move, d: Definition[]) {
     n.lost = { ...n.lost, [enemy]: n.lost[enemy] + royalCaptures.length };
   const statsSnapshot = structuredClone(stats);
   n = applyGrowth(n, d, statsSnapshot);
-  const inherited = captures.find((capture) => capture.evolved && d.find((definition) => definition.id === capture.definitionId)?.summoning?.timing === "inherit");
+  const inherited = captures.find((capture) => !capture.summoned && capture.evolved && d.find((definition) => definition.id === capture.definitionId)?.summoning?.timing === "inherit");
   if (inherited) {
     const origin = m.next ? m.next.to : m.to;
     const candidates = directions.map((v) => ({ row: origin.row + v.dy, col: origin.col + v.dx })).filter((pos) => inside(pos) && !at(n, pos));
