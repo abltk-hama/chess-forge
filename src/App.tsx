@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import {
   definitionCost,
@@ -22,6 +22,7 @@ import {
   play,
   placeSummon,
 } from "./domain/game";
+import { chooseSummonPlacement } from "./domain/ai";
 import {
   boardDraftErrors,
   boardDraftFromSetup,
@@ -57,6 +58,7 @@ import {
   type Role,
   type SaveData,
   type Setup,
+  type SimulationResult,
   type SuspendedMatchData,
   type Usage,
   type Vec,
@@ -69,6 +71,9 @@ import {
   parse,
   save,
   saveMatch,
+  loadSimulationResults,
+  saveSimulationResult,
+  deleteSimulationResult,
 } from "./infrastructure/storage";
 import {
   chooseAutoImportFile,
@@ -78,7 +83,7 @@ import {
   supportsAutoImport,
   type AutoImportHandle,
 } from "./infrastructure/autoImport";
-type Page = "home" | "editor" | "setup" | "game";
+type Page = "home" | "editor" | "setup" | "game" | "simulation";
 type PlacementMode = "formation" | "editor";
 const blank = (): Definition => ({
   id: crypto.randomUUID(),
@@ -1665,7 +1670,9 @@ function SetupView({
   mode: gameMode,
   setMode: setGameMode,
   difficulty,
+  blackDifficulty,
   setDifficulty,
+  setBlackDifficulty,
   start,
 }: {
   defs: Definition[];
@@ -1676,7 +1683,9 @@ function SetupView({
   mode: GameMode;
   setMode: (mode: GameMode) => void;
   difficulty: AIDifficulty;
+  blackDifficulty: AIDifficulty;
   setDifficulty: (difficulty: AIDifficulty) => void;
+  setBlackDifficulty: (difficulty: AIDifficulty) => void;
   start: (match?: Match) => void;
 }) {
   const [selectedSlot, setSelectedSlot] = useState(0),
@@ -1750,6 +1759,7 @@ function SetupView({
             <option value="editor">盤面編集</option>
           </select>
         </label>
+        {gameMode === "ai-ai" && <label>黒AI難易度<select aria-label="観戦の黒AI難易度" value={blackDifficulty} onChange={(event) => setBlackDifficulty(event.target.value as AIDifficulty)}><option value="easy">EASY</option><option value="normal">NORMAL</option><option value="hard">HARD</option></select></label>}
         {placementMode === "formation" && (
           <label>
             配置モード
@@ -1794,12 +1804,13 @@ function SetupView({
           >
             <option value="local">ローカル2人対戦</option>
             <option value="ai">AI対戦（人間：白）</option>
+            <option value="ai-ai">AI対AI観戦</option>
           </select>
         </label>
         <label>
           AI難易度
           <select
-            disabled={gameMode !== "ai"}
+            disabled={gameMode === "local"}
             value={difficulty}
             onChange={(event) =>
               setDifficulty(event.target.value as AIDifficulty)
@@ -2171,6 +2182,7 @@ function Game({
   defs,
   mode,
   difficulty,
+  blackDifficulty,
   onExit,
 }: {
   match: Match;
@@ -2178,9 +2190,11 @@ function Game({
   defs: Definition[];
   mode: GameMode;
   difficulty: AIDifficulty;
+  blackDifficulty: AIDifficulty;
   onExit: () => void;
 }) {
   const [selected, setSelected] = useState<Pos | null>(null);
+  const initialMatch = useRef(structuredClone(match));
   const [inspected, setInspected] = useState<Pos | null>(null);
   const [threatView, setThreatView] = useState<"off" | "turn" | "opponent">(
     "off",
@@ -2190,13 +2204,16 @@ function Game({
   >(null);
   const [thinking, setThinking] = useState(false);
   const [aiError, setAiError] = useState("");
+  const [paused, setPaused] = useState(false), [stepRequested, setStepRequested] = useState(false), [watchSpeed, setWatchSpeed] = useState<0 | 400 | 1000>(400);
   useEffect(() => {
-    if (mode === "ai" && match.pendingSummon?.owner === "black") {
-      setMatch(placeSummon(match, match.pendingSummon.candidates[0]));
+    const aiTurn = (mode === "ai" && match.turn === "black") || mode === "ai-ai";
+    if (!aiTurn || (mode === "ai-ai" && paused && !stepRequested)) return;
+    if (match.pendingSummon && (mode === "ai-ai" || match.pendingSummon.owner === "black")) {
+      setMatch(placeSummon(match, chooseSummonPlacement(match, defs) ?? match.pendingSummon.candidates[0]));
       return;
     }
-    if (mode !== "ai" || match.turn !== "black" || match.winner || match.draw)
-      return;
+    if (match.winner || match.draw) return;
+    if (match.history.length >= 200) { setMatch({ ...match, draw: true, message: "最大200手に到達したため引き分けです。" }); return; }
     const worker = new Worker(
       new URL("./domain/ai.worker.ts", import.meta.url),
       { type: "module" },
@@ -2217,27 +2234,31 @@ function Game({
         setAiError(`AIエラー：${event.data.error}`);
         return;
       }
-      setMatch(
-        event.data.move
-          ? play(match, event.data.move, defs)
+      const apply = () => {
+        setMatch(
+          event.data.move
+            ? play(match, event.data.move, defs)
           : {
               ...match,
               draw: true,
               message: "AIに合法手がないため引き分けです。",
-            },
-      );
+              },
+        );
+        setStepRequested(false);
+      };
+      if (mode === "ai-ai" && watchSpeed) window.setTimeout(apply, watchSpeed); else apply();
     };
     worker.onerror = () => {
       if (!active) return;
       setThinking(false);
       setAiError("AIエラー：思考処理を開始できませんでした。");
     };
-    worker.postMessage({ match, defs, difficulty });
+    worker.postMessage({ match, defs, difficulty: mode === "ai-ai" && match.turn === "black" ? blackDifficulty : difficulty });
     return () => {
       active = false;
       worker.terminate();
     };
-  }, [match, defs, mode, difficulty, setMatch]);
+  }, [match, defs, mode, difficulty, blackDifficulty, setMatch, paused, stepRequested, watchSpeed]);
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || pending) return;
@@ -2247,7 +2268,7 @@ function Game({
     window.addEventListener("keydown", keydown);
     return () => window.removeEventListener("keydown", keydown);
   }, [pending]);
-  const locked = thinking || (mode === "ai" && match.turn === "black" && match.pendingSummon?.owner !== "white");
+  const locked = thinking || mode === "ai-ai" || (mode === "ai" && match.turn === "black" && match.pendingSummon?.owner !== "white");
   const moves = selected ? legal(match, selected, defs) : [];
   const targets = new Set(
     match.pendingSummon
@@ -2346,6 +2367,12 @@ function Game({
           {match.pendingSummon && <p>派生駒の配置先を選んでください（残り{match.pendingSummon.remaining}体）。</p>}
         </div>
         <div className="range-controls">
+          {mode === "ai-ai" && <>
+            <button onClick={() => setPaused(!paused)}>{paused ? "再開" : "一時停止"}</button>
+            <button disabled={!paused || thinking} onClick={() => setStepRequested(true)}>1手進める</button>
+            <button onClick={() => { setPaused(true); setStepRequested(false); setMatch(structuredClone(initialMatch.current)); }}>最初から</button>
+            <label>速度<select aria-label="観戦速度" value={watchSpeed} onChange={(event) => setWatchSpeed(Number(event.target.value) as 0 | 400 | 1000)}><option value="1000">低速</option><option value="400">標準</option><option value="0">高速</option></select></label>
+          </>}
           <label>
             効き表示
             <select
@@ -2525,6 +2552,35 @@ function Game({
     </section>
   );
 }
+
+function SimulationView({ defs, setup, preset }: { defs: Definition[]; setup: Setup; preset: Preset }) {
+  const [games, setGames] = useState(20), [whiteDifficulty, setWhiteDifficulty] = useState<AIDifficulty>("hard"), [blackDifficulty, setBlackDifficulty] = useState<AIDifficulty>("hard"), [swapSides, setSwapSides] = useState(true), [maxPlies, setMaxPlies] = useState(200), [progress, setProgress] = useState(0), [running, setRunning] = useState(false), [results, setResults] = useState<SimulationResult[]>(() => { try { return loadSimulationResults(); } catch { return []; } }), [active, setActive] = useState<SimulationResult | null>(results[0] ?? null), [error, setError] = useState("");
+  const workerRef = useMemo<{ current: Worker | null; partial: SimulationResult | null }>(() => ({ current: null, partial: null }), []);
+  const start = () => {
+    workerRef.current?.terminate(); workerRef.partial = null; setProgress(0); setRunning(true); setError("");
+    const worker = new Worker(new URL("./domain/simulation.worker.ts", import.meta.url), { type: "module" }); workerRef.current = worker;
+    worker.onmessage = (event: MessageEvent<{ progress?: number; partial?: SimulationResult; result?: SimulationResult; error?: string }>) => {
+      if (event.data.progress) setProgress(event.data.progress);
+      if (event.data.partial) workerRef.partial = event.data.partial;
+      if (event.data.error) { setError(event.data.error); setRunning(false); worker.terminate(); }
+      if (event.data.result) { const saved = saveSimulationResult(event.data.result); setResults(saved); setActive(event.data.result); setRunning(false); worker.terminate(); }
+    };
+    worker.postMessage({ defs, setup, preset, options: { games, whiteDifficulty, blackDifficulty, swapSides, maxPlies, seed: Date.now() & 0x7fffffff } });
+  };
+  const stop = () => { workerRef.current?.terminate(); workerRef.current = null; if (workerRef.partial) { const saved = saveSimulationResult(workerRef.partial); setResults(saved); setActive(workerRef.partial); } setRunning(false); };
+  return <section><h2>AIバランスシミュレーション</h2><div className="panel simulation-controls">
+    <label>対局数<select aria-label="対局数" value={games} onChange={(e) => setGames(Number(e.target.value))}><option value="10">10戦</option><option value="20">20戦</option><option value="50">50戦</option></select></label>
+    <label>白AI<select aria-label="白AI難易度" value={whiteDifficulty} onChange={(e) => setWhiteDifficulty(e.target.value as AIDifficulty)}><option value="easy">EASY</option><option value="normal">NORMAL</option><option value="hard">HARD</option></select></label>
+    <label>黒AI<select aria-label="黒AI難易度" value={blackDifficulty} onChange={(e) => setBlackDifficulty(e.target.value as AIDifficulty)}><option value="easy">EASY</option><option value="normal">NORMAL</option><option value="hard">HARD</option></select></label>
+    <label>最大手数<input aria-label="最大手数" type="number" min="20" max="400" value={maxPlies} onChange={(e) => setMaxPlies(Number(e.target.value))} /></label>
+    <label><input type="checkbox" checked={swapSides} onChange={(e) => setSwapSides(e.target.checked)} />後半戦で白黒AI設定を入れ替える</label>
+    <button disabled={running} onClick={start}>開始</button><button disabled={!running} onClick={stop}>中断</button>
+    {running && <p>進捗：{progress}/{games}</p>}{error && <p className="error">{error}</p>}
+  </div>
+  {!!results.length && <div className="simulation-history"><h3>直近の結果</h3>{results.map((result) => <span key={result.id}><button onClick={() => setActive(result)}>{new Date(result.createdAt).toLocaleString()}・{result.gamesCompleted}戦</button><button onClick={() => { const next = deleteSimulationResult(result.id); setResults(next); if (active?.id === result.id) setActive(next[0] ?? null); }}>削除</button></span>)}</div>}
+  {active && <div className="panel simulation-result"><h3>集計結果</h3><p>白勝 {active.whiteWins}・黒勝 {active.blackWins}・引分 {active.draws}／平均手数 {active.gamesCompleted ? (active.games.reduce((sum, game) => sum + game.plies, 0) / active.gamesCompleted).toFixed(1) : "0"}</p><div className="table-scroll"><table><thead><tr><th>駒</th><th>出場</th><th>生成</th><th>捕獲</th><th>被捕獲</th><th>生存率</th><th>チェック</th><th>メイト</th><th>進化</th><th>召喚</th></tr></thead><tbody>{active.pieces.map((stat) => <tr key={stat.key}><td>{stat.label}</td><td>{stat.appearances}</td><td>{stat.generated}</td><td>{stat.captures}</td><td>{stat.losses}</td><td>{stat.appearances + stat.generated ? `${Math.round(stat.survivors * 100 / (stat.appearances + stat.generated))}%` : "-"}</td><td>{stat.checks}</td><td>{stat.mates}</td><td>{stat.evolutions}</td><td>{stat.summons}</td></tr>)}</tbody></table></div><details><summary>対局一覧</summary><ol>{active.games.map((game, index) => <li key={index}>#{index + 1} {game.winner ? `${game.winner}勝` : "引分"}・{game.plies}手・{game.reason}・seed {game.seed}</li>)}</ol></details></div>}
+  </section>;
+}
 export default function App() {
   const initial = useMemo(() => {
     try {
@@ -2545,6 +2601,7 @@ export default function App() {
     [preset, setPreset] = useState<Preset>(initial?.preset ?? "classic"),
     [mode, setMode] = useState<GameMode>("local"),
     [difficulty, setDifficulty] = useState<AIDifficulty>("normal"),
+    [blackDifficulty, setBlackDifficulty] = useState<AIDifficulty>("normal"),
     [page, setPage] = useState<Page>("home"),
     [match, setMatch] = useState<Match | null>(null),
     [matchDefs, setMatchDefs] = useState<Definition[]>([]),
@@ -2648,6 +2705,7 @@ export default function App() {
           <button onClick={() => setPage("home")}>ホーム</button>
           <button onClick={() => setPage("editor")}>駒を作る</button>
           <button onClick={() => setPage("setup")}>対局設定</button>
+          <button onClick={() => setPage("simulation")}>AI統計</button>
         </nav>
       </header>
       {notice && <p className="notice">{notice}</p>}
@@ -2671,6 +2729,7 @@ export default function App() {
             )}
             <button onClick={() => setPage("editor")}>駒を作る</button>
             <button onClick={() => setPage("setup")}>新しい対局</button>
+            <button onClick={() => setPage("simulation")}>AIバランステスト</button>
             {(suspended || brokenSuspended) && (
               <button
                 onClick={() => {
@@ -2749,7 +2808,9 @@ export default function App() {
           mode={mode}
           setMode={setMode}
           difficulty={difficulty}
+          blackDifficulty={blackDifficulty}
           setDifficulty={setDifficulty}
+          setBlackDifficulty={setBlackDifficulty}
           start={(editedMatch) => {
             const snapshot = structuredClone(defs);
             const nextMatch = editedMatch ?? createMatch(snapshot, setup, preset);
@@ -2776,9 +2837,11 @@ export default function App() {
           defs={matchDefs}
           mode={mode}
           difficulty={difficulty}
+          blackDifficulty={blackDifficulty}
           onExit={() => setPage("setup")}
         />
       )}
+      {page === "simulation" && <SimulationView defs={defs} setup={setup} preset={preset} />}
       {showAutoPrompt && autoHandle && (
         <div className="modal-backdrop" role="presentation">
           <section

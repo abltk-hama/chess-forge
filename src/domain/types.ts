@@ -55,7 +55,7 @@ export interface Summoning {
   symbol: string;
   patterns: Pattern[];
 }
-export type GameMode = "local" | "ai";
+export type GameMode = "local" | "ai" | "ai-ai";
 export type AIDifficulty = "easy" | "normal" | "hard";
 export type FormationMode = "balanced" | "free";
 export interface Pos {
@@ -167,6 +167,44 @@ export interface SuspendedMatchData {
   mode: GameMode;
   difficulty: AIDifficulty;
   savedAt: string;
+}
+export interface PieceSimulationStat {
+  key: string;
+  label: string;
+  appearances: number;
+  generated: number;
+  captures: number;
+  losses: number;
+  survivors: number;
+  checks: number;
+  mates: number;
+  evolutions: number;
+  summons: number;
+}
+export interface SimulationGameResult {
+  winner: Color | null;
+  draw: boolean;
+  plies: number;
+  reason: string;
+  seed: number;
+  history: string[];
+}
+export interface SimulationResult {
+  id: string;
+  createdAt: string;
+  gamesRequested: number;
+  gamesCompleted: number;
+  whiteDifficulty: AIDifficulty;
+  blackDifficulty: AIDifficulty;
+  maxPlies: number;
+  whiteWins: number;
+  blackWins: number;
+  draws: number;
+  games: SimulationGameResult[];
+  pieces: PieceSimulationStat[];
+  definitions: Definition[];
+  setup: Setup;
+  preset: Preset;
 }
 export const directions: Vec[] = [
   { dx: 0, dy: -1 },

@@ -4,7 +4,7 @@ import {
   growthCost,
   transformedDefinition,
 } from "./cost";
-import { allLegal, isRoyal, play, threatened } from "./game";
+import { allLegal, isRoyal, placeSummon, play, threatened } from "./game";
 import {
   idx,
   type AIDifficulty,
@@ -172,6 +172,7 @@ export function chooseMove(
   defs: Definition[],
   difficulty: AIDifficulty,
   random = Math.random,
+  hardTimeMs = 1_000,
 ): Move | null {
   const moves = ordered(match, defs);
   if (!moves.length) return null;
@@ -185,7 +186,7 @@ export function chooseMove(
     return moves.at(-1)!;
   }
   if (difficulty === "normal") return bestAtDepth(match, defs, 2, Infinity);
-  const deadline = performance.now() + 1_000;
+  const deadline = performance.now() + hardTimeMs;
   let best = moves[0];
   for (let depth = 1; depth <= 8; depth++) {
     try {
@@ -196,4 +197,15 @@ export function chooseMove(
     }
   }
   return best;
+}
+
+export function chooseSummonPlacement(match: Match, defs: Definition[]) {
+  const candidates = match.pendingSummon?.candidates ?? [];
+  if (!candidates.length) return null;
+  const maximize = match.pendingSummon!.owner === "black";
+  return candidates.reduce((best, candidate) => {
+    const score = evaluate(placeSummon(match, candidate), defs);
+    const bestScore = evaluate(placeSummon(match, best), defs);
+    return maximize ? (score > bestScore ? candidate : best) : score < bestScore ? candidate : best;
+  });
 }

@@ -4,10 +4,11 @@ import {
   formationFromSetup,
   formationMode,
 } from "../domain/formation";
-import type { SaveData, SuspendedMatchData } from "../domain/types";
+import type { SaveData, SimulationResult, SuspendedMatchData } from "../domain/types";
 
 const KEY = "custom-piece-chess:v1";
 const MATCH_KEY = "custom-piece-chess:match:v1";
+const SIMULATION_KEY = "custom-piece-chess:simulations:v1";
 
 export const save = (data: SaveData) =>
   localStorage.setItem(KEY, JSON.stringify(data));
@@ -97,7 +98,7 @@ export function loadMatch(): SuspendedMatchData | null {
     !("definitions" in value) ||
     !Array.isArray(value.definitions) ||
     !("mode" in value) ||
-    (value.mode !== "local" && value.mode !== "ai") ||
+    (value.mode !== "local" && value.mode !== "ai" && value.mode !== "ai-ai") ||
     !("difficulty" in value) ||
     !["easy", "normal", "hard"].includes(String(value.difficulty)) ||
     !("savedAt" in value) ||
@@ -132,6 +133,22 @@ export function loadMatch(): SuspendedMatchData | null {
 }
 
 export const clearMatch = () => localStorage.removeItem(MATCH_KEY);
+export const loadSimulationResults = (): SimulationResult[] => {
+  const raw = localStorage.getItem(SIMULATION_KEY);
+  if (!raw) return [];
+  const value: unknown = JSON.parse(raw);
+  return Array.isArray(value) ? (value as SimulationResult[]).slice(0, 3) : [];
+};
+export const saveSimulationResult = (result: SimulationResult) => {
+  const results = [result, ...loadSimulationResults().filter((item) => item.id !== result.id)].slice(0, 3);
+  localStorage.setItem(SIMULATION_KEY, JSON.stringify(results));
+  return results;
+};
+export const deleteSimulationResult = (id: string) => {
+  const results = loadSimulationResults().filter((item) => item.id !== id);
+  localStorage.setItem(SIMULATION_KEY, JSON.stringify(results));
+  return results;
+};
 
 export function download(data: SaveData) {
   const url = URL.createObjectURL(
