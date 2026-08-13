@@ -47,6 +47,14 @@ export interface Transformation {
   localSwap?: boolean;
   globalSwap?: boolean;
 }
+export interface Summoning {
+  condition: EvolutionCondition;
+  timing: "summon" | "inherit" | "split";
+  range: "adjacent" | "movement";
+  name: string;
+  symbol: string;
+  patterns: Pattern[];
+}
 export type GameMode = "local" | "ai";
 export type AIDifficulty = "easy" | "normal" | "hard";
 export type FormationMode = "balanced" | "free";
@@ -95,6 +103,7 @@ export interface Definition {
   isCrown: boolean;
   growth?: Growth;
   transformation?: Transformation;
+  summoning?: Summoning;
 }
 export interface Piece {
   id: string;
@@ -107,6 +116,7 @@ export interface Piece {
   globalSwapUsed?: boolean;
   captures?: number;
   reachedEnemyDepth?: number;
+  summoned?: boolean;
 }
 export interface Move {
   from: Pos;
@@ -138,6 +148,7 @@ export interface Match {
   winner: Color | null;
   draw: boolean;
   message: string;
+  pendingSummon?: { owner: Color; definitionId: string; origin: Pos; remaining: number; candidates: Pos[] };
   stats?: Record<
     Color,
     { captures: number; losses: number; evolutions: number; kingDepth: number }

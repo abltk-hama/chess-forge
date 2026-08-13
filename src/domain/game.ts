@@ -11,9 +11,9 @@ import type {
   Usage,
   Vec,
 } from "./types";
-import { idx, inside, other } from "./types";
+import { directions, idx, inside, other } from "./types";
 import { formationFromSetup } from "./formation";
-import { jumpLimit, transformedDefinition } from "./cost";
+import { jumpLimit, summonedDefinition, transformedDefinition } from "./cost";
 import type { EvolutionCondition } from "./types";
 const back: Role[] = [
   "rook",
@@ -238,9 +238,7 @@ export function pseudo(
   if (p.role !== "custom") return standard(s, from, p);
   const source = defs.find((x) => x.id === p.definitionId);
   if (!source) return [];
-  const d = p.evolved && source.transformation
-    ? transformedDefinition(source)
-    : source;
+  const d = p.summoned ? summonedDefinition(source) : p.evolved && source.transformation ? transformedDefinition(source) : source;
   const out: Move[] = [];
   for (const [patternIndex, pattern] of d.patterns.entries()) {
     if ((pattern.phase ?? 1) !== phase) continue;
@@ -608,7 +606,7 @@ function applyGrowth(match: Match, definitions: Definition[], statsSnapshot: Ret
   board.forEach((piece, index) => {
     if (!piece || piece.role !== "custom" || piece.evolved) return;
     const definition = definitions.find((item) => item.id === piece.definitionId);
-    const evolution = definition?.growth ?? definition?.transformation;
+    const evolution = definition?.growth ?? definition?.transformation ?? definition?.summoning;
     if (!evolution) return;
     const position = { row: Math.floor(index / 8), col: index % 8 };
     if (!conditionMet(evolution.condition, piece, position, match, statsSnapshot)) return;
@@ -634,7 +632,30 @@ function applyGrowth(match: Match, definitions: Definition[], statsSnapshot: Ret
     }).length;
     targets[color] += newCrowns;
   }
-  return { ...match, board, stats, targets };
+  let result: Match = { ...match, board, stats, targets };
+  const index = board.findIndex((piece, i) => {
+    const before = match.board[i], definition = definitions.find((item) => item.id === piece?.definitionId);
+    return !!piece && !before?.evolved && !!piece.evolved && !!definition?.summoning && definition.summoning.timing !== "inherit";
+  });
+  if (index >= 0) {
+    const piece = board[index]!, definition = definitions.find((item) => item.id === piece.definitionId)!, summon = definition.summoning!;
+    const origin = { row: Math.floor(index / 8), col: index % 8 };
+    if (summon.timing === "split") result.board[index] = null;
+    let candidates = summon.range === "movement" && summon.timing === "summon"
+      ? pseudo(result, origin, definitions).filter((move) => !at(result, move.to)).map((move) => move.to)
+      : directions.map((v) => ({ row: origin.row + v.dy, col: origin.col + v.dx })).filter((pos) => inside(pos) && !at(result, pos));
+    if (summon.timing === "split") candidates = [origin, ...candidates];
+    if (candidates.length) result.pendingSummon = { owner: piece.color, definitionId: definition.id, origin, remaining: summon.timing === "split" ? 2 : 1, candidates };
+  }
+  return result;
+}
+export function placeSummon(s: Match, to: Pos): Match {
+  const pending = s.pendingSummon;
+  if (!pending || !pending.candidates.some((pos) => eq(pos, to)) || at(s, to)) return s;
+  const board = [...s.board];
+  board[idx(to)] = { id: `summon-${Date.now()}-${pending.remaining}`, color: pending.owner, role: "custom", definitionId: pending.definitionId, moved: false, summoned: true };
+  const candidates = pending.candidates.filter((pos) => !eq(pos, to) && !at({ ...s, board }, pos));
+  return { ...s, board, pendingSummon: pending.remaining > 1 && candidates.length ? { ...pending, remaining: pending.remaining - 1, candidates } : undefined };
 }
 export function play(s: Match, m: Move, d: Definition[]) {
   const p = at(s, m.from)!,
@@ -673,6 +694,12 @@ export function play(s: Match, m: Move, d: Definition[]) {
     n.lost = { ...n.lost, [enemy]: n.lost[enemy] + royalCaptures.length };
   const statsSnapshot = structuredClone(stats);
   n = applyGrowth(n, d, statsSnapshot);
+  const inherited = captures.find((capture) => capture.evolved && d.find((definition) => definition.id === capture.definitionId)?.summoning?.timing === "inherit");
+  if (inherited) {
+    const origin = m.next ? m.next.to : m.to;
+    const candidates = directions.map((v) => ({ row: origin.row + v.dy, col: origin.col + v.dx })).filter((pos) => inside(pos) && !at(n, pos));
+    if (candidates.length) n.pendingSummon = { owner: inherited.color, definitionId: inherited.definitionId!, origin, remaining: 1, candidates };
+  }
   const win =
     s.preset === "royal-all"
       ? n.lost[enemy] >= n.targets[enemy]
@@ -701,7 +728,7 @@ export function play(s: Match, m: Move, d: Definition[]) {
     s.preset === "classic" && royalCaptures.some((cap) => cap.role === "custom")
   )
     return { ...n, winner: p.color, message: "王冠駒が取られました。" };
-  if (s.preset === "classic" && !n.winner) {
+  if (s.preset === "classic" && !n.winner && !n.pendingSummon) {
     const moves = allLegal(n, d);
     if (!moves.length) {
       const k = king(n, enemy),
@@ -711,7 +738,7 @@ export function play(s: Match, m: Move, d: Definition[]) {
         : { ...n, draw: true, message: "ステイルメイトです。" };
     }
   }
-  if (s.preset !== "classic" && !n.winner && !allLegal(n, d).length)
+  if (s.preset !== "classic" && !n.winner && !n.pendingSummon && !allLegal(n, d).length)
     n = { ...n, draw: true, message: "合法手がないため引き分けです。" };
   return n;
 }
@@ -719,7 +746,9 @@ export function pieceText(p: Piece, d: Definition[]) {
   const definition =
     p.role === "custom" ? d.find((x) => x.id === p.definitionId) : undefined;
   const t = definition
-    ? p.evolved && definition.transformation
+    ? p.summoned && definition.summoning
+      ? definition.summoning.symbol
+      : p.evolved && definition.transformation
       ? definition.transformation.symbol
       : definition.symbol
     : label[p.role as Exclude<Role, "custom">] ?? "?";

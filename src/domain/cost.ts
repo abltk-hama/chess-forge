@@ -53,6 +53,9 @@ export function normalize(d: Definition): Definition {
           })),
         }
       : undefined,
+    summoning: d.summoning
+      ? { ...d.summoning, name: d.summoning.name.trim(), symbol: d.summoning.symbol.trim().toUpperCase().slice(0, 2), patterns: d.summoning.patterns.map((p) => ({ ...p, vectors: unique(p.vectors) })) }
+      : undefined,
   };
 }
 export function transformedDefinition(d: Definition): Definition {
@@ -65,6 +68,16 @@ export function transformedDefinition(d: Definition): Definition {
     growth: undefined,
     transformation: undefined,
   };
+}
+export function summonedDefinition(d: Definition): Definition {
+  if (!d.summoning) return d;
+  return { ...d, name: d.summoning.name, symbol: d.summoning.symbol, patterns: d.summoning.patterns, isCrown: false, growth: undefined, transformation: undefined, summoning: undefined };
+}
+export const SUMMON_LIMITS = {
+  summon: [0, 13, 15, 17, 20], inherit: [0, 8, 10, 12, 15], split: [0, 5, 7, 9, 10],
+} as const;
+export function summonLimit(d: Definition) {
+  return d.summoning ? SUMMON_LIMITS[d.summoning.timing][conditionDifficulty(d.summoning.condition)] : 0;
 }
 export function evolvedDefinition(d: Definition): Definition {
   if (!d.growth) return d;
@@ -139,7 +152,7 @@ export function growthCost(d: Definition) {
 export const definitionCost = (definition: Definition) =>
   definition.growth
     ? growthCost(definition).total
-    : cost({ ...definition, transformation: undefined });
+    : cost({ ...definition, transformation: undefined, summoning: undefined }) + (definition.summoning ? (definition.summoning.timing === "summon" ? 5 : 3) + (definition.summoning.range === "movement" ? 3 : 0) : 0);
 export function transformationLimit(d: Definition) {
   if (!d.transformation) return 30;
   return [30, 24, 26, 28, 29][conditionDifficulty(d.transformation.condition)];
@@ -380,6 +393,16 @@ export function errors(d: Definition, all: Definition[] = []) {
   }
   if (n.growth && n.transformation)
     e.push("成長と変身は同時に設定できません。");
+  if ([n.growth, n.transformation, n.summoning].filter(Boolean).length > 1) e.push("成長・変身・召喚は同時に設定できません。");
+  if (n.summoning) {
+    const summoned = summonedDefinition(n);
+    if (!summoned.name || !/^[A-Z]{1,2}$/.test(summoned.symbol)) e.push("派生駒の名前と英字1～2文字の記号が必要です。");
+    if (summoned.symbol === n.symbol || (RESERVED_SYMBOLS as readonly string[]).includes(summoned.symbol)) e.push("派生駒の記号は通常駒・標準駒と重複できません。");
+    if (all.some((item) => item.id !== n.id && (item.symbol.toUpperCase() === summoned.symbol || item.transformation?.symbol.toUpperCase() === summoned.symbol || item.summoning?.symbol.toUpperCase() === summoned.symbol))) e.push("派生駒の記号が重複しています。");
+    if (summoned.patterns.length < 1 || summoned.patterns.length > 4 || summoned.patterns.some((p) => !p.vectors.length)) e.push("派生駒には1～4個の有効な移動セットが必要です。");
+    if (cost(summoned) > summonLimit(n)) e.push(`派生駒コストが上限${summonLimit(n)}を超えています。`);
+    if (n.isCrown && n.summoning.timing === "split") e.push("Crown駒は分裂できません。");
+  }
   if (n.transformation) {
     const transformed = transformedDefinition(n);
     if (!transformed.name || transformed.name.length > 20)

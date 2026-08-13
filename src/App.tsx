@@ -10,6 +10,7 @@ import {
   RESERVED_SYMBOLS,
   transformedDefinition,
   transformationLimit,
+  summonLimit,
   jumpLimit,
 } from "./domain/cost";
 import {
@@ -18,6 +19,7 @@ import {
   legal,
   pieceText,
   play,
+  placeSummon,
 } from "./domain/game";
 import {
   boardDraftErrors,
@@ -1002,7 +1004,7 @@ function Editor({
               進化方式
               <select
                 aria-label="進化方式"
-                value={d.growth ? "growth" : d.transformation ? "transformation" : "none"}
+                value={d.growth ? "growth" : d.transformation ? "transformation" : d.summoning ? "summoning" : "none"}
                 onChange={(event) =>
                   setD({
                     ...d,
@@ -1037,10 +1039,15 @@ function Editor({
                             ],
                           }
                         : undefined,
+                    summoning:
+                      event.target.value === "summoning"
+                        ? { condition: { kind: "captures", subject: "self", threshold: 1 }, timing: "summon", range: "adjacent", name: "", symbol: "", patterns: [{ kind: "direction", vectors: [], range: 1, usage: "both" }] }
+                        : undefined,
                   })
                 }
               >
                 <option value="none">なし</option>
+                <option value="summoning">召喚・継承・分裂</option>
                 <option value="growth">成長</option>
                 <option value="transformation">変身</option>
               </select>
@@ -1303,6 +1310,17 @@ function Editor({
                     })
                   }
                 />
+              </>
+            )}
+            {d.summoning && (
+              <>
+                <label>発動方式<select aria-label="召喚方式" value={d.summoning.timing} onChange={(event) => setD({ ...d, summoning: { ...d.summoning!, timing: event.target.value as "summon" | "inherit" | "split", range: event.target.value === "summon" ? d.summoning!.range : "adjacent" } })}><option value="summon">通常召喚</option><option value="inherit">継承</option><option value="split">分裂</option></select></label>
+                {d.summoning.timing === "summon" && <label>召喚範囲<select aria-label="召喚範囲" value={d.summoning.range} onChange={(event) => setD({ ...d, summoning: { ...d.summoning!, range: event.target.value as "adjacent" | "movement" } })}><option value="adjacent">周囲8マス</option><option value="movement">1回目の移動範囲 (+3)</option></select></label>}
+                <GrowthConditionFields condition={d.summoning.condition} onChange={(condition) => setD({ ...d, summoning: { ...d.summoning!, condition } })} />
+                <label>派生駒名称<input aria-label="派生駒名称" maxLength={20} value={d.summoning.name} onChange={(event) => setD({ ...d, summoning: { ...d.summoning!, name: event.target.value } })} /></label>
+                <label>派生駒記号<input aria-label="派生駒記号" maxLength={2} value={d.summoning.symbol} onChange={(event) => setD({ ...d, summoning: { ...d.summoning!, symbol: event.target.value.toUpperCase() } })} /></label>
+                <TransformationPatterns patterns={d.summoning.patterns} onChange={(patterns) => setD({ ...d, summoning: { ...d.summoning!, patterns } })} />
+                <p>派生駒コスト上限：{summonLimit(d)}</p>
               </>
             )}
           </fieldset>
@@ -2159,6 +2177,10 @@ function Game({
   const [thinking, setThinking] = useState(false);
   const [aiError, setAiError] = useState("");
   useEffect(() => {
+    if (mode === "ai" && match.pendingSummon?.owner === "black") {
+      setMatch(placeSummon(match, match.pendingSummon.candidates[0]));
+      return;
+    }
     if (mode !== "ai" || match.turn !== "black" || match.winner || match.draw)
       return;
     const worker = new Worker(
@@ -2211,10 +2233,12 @@ function Game({
     window.addEventListener("keydown", keydown);
     return () => window.removeEventListener("keydown", keydown);
   }, [pending]);
-  const locked = thinking || (mode === "ai" && match.turn === "black");
+  const locked = thinking || (mode === "ai" && match.turn === "black" && match.pendingSummon?.owner !== "white");
   const moves = selected ? legal(match, selected, defs) : [];
   const targets = new Set(
-    pending
+    match.pendingSummon
+      ? match.pendingSummon.candidates.map((p) => `${p.row},${p.col}`)
+      : pending
       ? pending
           .filter((m) => m.next)
           .map((m) => `${m.next!.to.row},${m.next!.to.col}`)
@@ -2251,6 +2275,10 @@ function Game({
   }
   const click = (p: Pos) => {
     const piece = match.board[idx(p)];
+    if (match.pendingSummon) {
+      if (match.pendingSummon.candidates.some((candidate) => candidate.row === p.row && candidate.col === p.col)) setMatch(placeSummon(match, p));
+      return;
+    }
     if (!pending && inspected?.row === p.row && inspected.col === p.col) {
       setSelected(null);
       setInspected(null);
@@ -2301,6 +2329,7 @@ function Game({
           {pending && (
             <p>{pending.some((move) => move.transit) ? "飛翔の着地点を選んでください。中継地点の駒は捕獲しません。" : "2回目の移動先を選ぶか、「ここで手番終了」を選択してください。"}</p>
           )}
+          {match.pendingSummon && <p>派生駒の配置先を選んでください（残り{match.pendingSummon.remaining}体）。</p>}
         </div>
         <div className="range-controls">
           <label>
