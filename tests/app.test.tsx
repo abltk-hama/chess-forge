@@ -154,12 +154,36 @@ describe("App", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "0,1" }));
-    expect(screen.getByRole("button", { name: "選択解除" })).toBeVisible();
+    const clearInspection = screen.getByRole("button", { name: "選択解除" });
+    expect(clearInspection).toBeVisible();
+    expect(clearInspection).toHaveClass("floating-clear-inspection");
     expect(screen.getByRole("button", { name: "2,0" })).toHaveClass(
       "range-both",
     );
-    fireEvent.click(screen.getByRole("button", { name: "選択解除" }));
+    expect(screen.getByRole("button", { name: "4,4" })).toHaveClass(
+      "inspection-muted",
+    );
+    expect(
+      screen.getByRole("button", { name: "0,0" }).querySelector("span"),
+    ).toHaveClass("inspection-switchable");
+    fireEvent.click(clearInspection);
     expect(screen.getByRole("button", { name: "2,0" })).toHaveClass("threat");
+  });
+
+  it("outlines a capturable enemy piece in red", () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "対局設定" }));
+    fireEvent.click(screen.getByRole("button", { name: "対局開始" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "6,4" }));
+    fireEvent.click(screen.getByRole("button", { name: "4,4" }));
+    fireEvent.click(screen.getByRole("button", { name: "1,3" }));
+    fireEvent.click(screen.getByRole("button", { name: "3,3" }));
+    fireEvent.click(screen.getByRole("button", { name: "4,4" }));
+
+    expect(
+      screen.getByRole("button", { name: "3,3" }).querySelector("span"),
+    ).toHaveClass("inspection-capturable");
   });
 
   it("clears inspection by tapping the piece again or pressing Escape", () => {

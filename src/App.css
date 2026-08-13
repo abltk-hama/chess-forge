@@ -269,6 +269,10 @@ main > section {
   width: max-content;
   border: 4px solid #b7995b;
 }
+.board-shell {
+  position: relative;
+  width: max-content;
+}
 .board button {
   padding: 0;
   border: 0;
@@ -322,6 +326,9 @@ main > section {
 .board .threat {
   background-image: linear-gradient(#d63d3d55, #d63d3d55);
 }
+.board .inspection-muted {
+  background-image: linear-gradient(#07100b20, #07100b20);
+}
 .board button {
   position: relative;
 }
@@ -339,6 +346,16 @@ main > section {
 }
 .clear-inspection {
   border-color: #d7bd80;
+}
+.floating-clear-inspection {
+  position: absolute;
+  z-index: 3;
+  top: 0.45rem;
+  right: 0.45rem;
+  min-height: 44px;
+  padding: 0.45rem 0.65rem;
+  background: #18231ded;
+  box-shadow: 0 0.2rem 0.7rem #07100b99;
 }
 .range-legend {
   margin-bottom: 1rem;
@@ -370,6 +387,22 @@ main > section {
 }
 .board .black {
   color: #151515;
+}
+.board .inspection-switchable {
+  text-shadow:
+    -1px -1px 0 #67d5e8,
+    1px -1px 0 #67d5e8,
+    -1px 1px 0 #67d5e8,
+    1px 1px 0 #67d5e8,
+    0 1px 3px #000;
+}
+.board .inspection-capturable {
+  text-shadow:
+    -1px -1px 0 #ef5757,
+    1px -1px 0 #ef5757,
+    -1px 1px 0 #ef5757,
+    1px 1px 0 #ef5757,
+    0 1px 3px #000;
 }
 .game-head {
   display: flex;
@@ -533,6 +566,9 @@ main > section {
     grid-template-columns: repeat(8, minmax(0, 1fr));
     width: 100%;
     border-width: 3px;
+  }
+  .board-shell {
+    width: 100%;
   }
   .board button {
     font-size: clamp(0.78rem, 5vw, 1.3rem);

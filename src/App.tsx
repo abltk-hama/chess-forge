@@ -1082,6 +1082,9 @@ function Game({
       mark,
     ]),
   );
+  const inspectedPiece = inspected
+    ? match.board[inspected.row * 8 + inspected.col]
+    : null;
   const threatColor =
     threatView === "turn"
       ? match.turn
@@ -1168,9 +1171,62 @@ function Game({
               <option value="opponent">相手側</option>
             </select>
           </label>
+          <button onClick={onExit}>終了</button>
+        </div>
+      </div>
+      <div className="game">
+        <div className="board-shell">
+          <div className="board">
+            {match.board.map((piece, i) => {
+              const p = { row: Math.floor(i / 8), col: i % 8 };
+              const key = `${p.row},${p.col}`;
+              const mark = inspectedMarks.get(key);
+              const isInspectedPiece =
+                inspected?.row === p.row && inspected.col === p.col;
+              const isCapturablePiece = Boolean(
+                piece &&
+                  inspectedPiece &&
+                  piece.color !== inspectedPiece.color &&
+                  mark?.capture,
+              );
+              const pieceFocusClass =
+                piece && inspected && !isInspectedPiece
+                  ? isCapturablePiece
+                    ? "inspection-capturable"
+                    : "inspection-switchable"
+                  : "";
+              const isOutsideInspection = Boolean(
+                inspected && !isInspectedPiece && !mark,
+              );
+              const rangeClass = mark
+                ? mark.move && mark.capture
+                  ? "range-both"
+                  : mark.capture
+                    ? mark.stationary
+                      ? "range-stationary"
+                      : "range-capture"
+                    : "range-move"
+                : "";
+              return (
+                <button
+                  aria-label={`${p.row},${p.col}`}
+                  className={`${(p.row + p.col) % 2 ? "dark" : "light"} ${isInspectedPiece ? "selected" : ""} ${targets.has(key) ? "move" : ""} ${rangeClass} ${mark?.second ? "range-second" : ""} ${threatenedSquares.has(key) ? "threat" : ""} ${isOutsideInspection ? "inspection-muted" : ""}`}
+                  onClick={() => click(p)}
+                  aria-disabled={locked}
+                  key={i}
+                >
+                  {piece && (
+                    <span className={`${piece.color} ${pieceFocusClass}`}>
+                      {pieceText(piece, defs)}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
           {inspected && !pending && (
             <button
-              className="clear-inspection"
+              className="clear-inspection floating-clear-inspection"
               onClick={() => {
                 setSelected(null);
                 setInspected(null);
@@ -1179,38 +1235,6 @@ function Game({
               選択解除
             </button>
           )}
-          <button onClick={onExit}>終了</button>
-        </div>
-      </div>
-      <div className="game">
-        <div className="board">
-          {match.board.map((piece, i) => {
-            const p = { row: Math.floor(i / 8), col: i % 8 };
-            const key = `${p.row},${p.col}`;
-            const mark = inspectedMarks.get(key);
-            const rangeClass = mark
-              ? mark.move && mark.capture
-                ? "range-both"
-                : mark.capture
-                  ? mark.stationary
-                    ? "range-stationary"
-                    : "range-capture"
-                  : "range-move"
-              : "";
-            return (
-              <button
-                aria-label={`${p.row},${p.col}`}
-                className={`${(p.row + p.col) % 2 ? "dark" : "light"} ${inspected?.row === p.row && inspected.col === p.col ? "selected" : ""} ${targets.has(key) ? "move" : ""} ${rangeClass} ${mark?.second ? "range-second" : ""} ${threatenedSquares.has(key) ? "threat" : ""}`}
-                onClick={() => click(p)}
-                aria-disabled={locked}
-                key={i}
-              >
-                {piece && (
-                  <span className={piece.color}>{pieceText(piece, defs)}</span>
-                )}
-              </button>
-            );
-          })}
         </div>
         <aside className="panel">
           <div className="range-legend" aria-label="範囲表示の凡例">
