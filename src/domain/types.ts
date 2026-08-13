@@ -10,6 +10,33 @@ export type Role =
 export type Preset = "classic" | "royal-any" | "royal-all";
 export type Range = 1 | 2 | 3 | "slide";
 export type Usage = "both" | "move" | "capture" | "stationary";
+export type EvolutionCondition =
+  | { kind: "captures"; subject: "self" | "allies"; threshold: number }
+  | { kind: "losses"; threshold: number }
+  | { kind: "territory"; subject: "self" | "king"; depth: 1 | 2 | 3 }
+  | {
+      kind: "evolutions";
+      side: "ally" | "enemy";
+      threshold: number;
+    }
+  | {
+      kind: "nearbyEnemies";
+      center: "self" | "king";
+      radius: 1 | 2 | 3;
+      threshold: number;
+    };
+export interface GrowthUnlock {
+  capture?: boolean;
+  stationary?: boolean;
+  cannon?: boolean;
+  jumpAllies?: 0 | 1 | 2;
+  jumpEnemies?: 0 | 1 | 2;
+}
+export interface Growth {
+  condition: EvolutionCondition;
+  unlockCrown?: boolean;
+  unlocks: Record<number, GrowthUnlock>;
+}
 export type GameMode = "local" | "ai";
 export type AIDifficulty = "easy" | "normal" | "hard";
 export type FormationMode = "balanced" | "free";
@@ -29,6 +56,8 @@ export interface Direction {
   initialOnly?: boolean;
   phase?: 1 | 2;
   cannon?: boolean;
+  /** Runtime-only marker is omitted from saved definitions. */
+  growthCannon?: boolean;
   jumpAllies?: 0 | 1 | 2 | boolean;
   jumpEnemies?: 0 | 1 | 2 | boolean;
   /** Version 1 compatibility. New definitions use jumpAllies/jumpEnemies. */
@@ -48,6 +77,7 @@ export interface Definition {
   symbol: string;
   patterns: Pattern[];
   isCrown: boolean;
+  growth?: Growth;
 }
 export interface Piece {
   id: string;
@@ -55,6 +85,9 @@ export interface Piece {
   role: Role;
   definitionId?: string;
   moved: boolean;
+  evolved?: boolean;
+  captures?: number;
+  reachedEnemyDepth?: number;
 }
 export interface Move {
   from: Pos;
@@ -84,6 +117,10 @@ export interface Match {
   winner: Color | null;
   draw: boolean;
   message: string;
+  stats?: Record<
+    Color,
+    { captures: number; losses: number; evolutions: number; kingDepth: number }
+  >;
 }
 export interface SaveData {
   version: 1;

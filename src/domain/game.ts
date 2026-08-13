@@ -12,8 +12,9 @@ import type {
   Vec,
 } from "./types";
 import { idx, inside, other } from "./types";
-import { crownCount, formationFromSetup } from "./formation";
+import { formationFromSetup } from "./formation";
 import { jumpLimit } from "./cost";
+import type { EvolutionCondition } from "./types";
 const back: Role[] = [
   "rook",
   "knight",
@@ -64,7 +65,9 @@ export function createMatch(
       };
     });
   }
-  const crowns = crownCount(formation, defs);
+  const crowns = formation.filter(
+    (id) => defs.find((definition) => definition.id === id)?.isCrown,
+  ).length;
   return {
     board,
     turn: "white",
@@ -76,6 +79,10 @@ export function createMatch(
     winner: null,
     draw: false,
     message: "白の手番です。",
+    stats: {
+      white: { captures: 0, losses: 0, evolutions: 0, kingDepth: 8 },
+      black: { captures: 0, losses: 0, evolutions: 0, kingDepth: 8 },
+    },
   };
 }
 function rays(
@@ -231,7 +238,7 @@ export function pseudo(
   const d = defs.find((x) => x.id === p.definitionId);
   if (!d) return [];
   const out: Move[] = [];
-  for (const pattern of d.patterns) {
+  for (const [patternIndex, pattern] of d.patterns.entries()) {
     if ((pattern.phase ?? 1) !== phase) continue;
     if (pattern.initialOnly && p.moved) continue;
     const sign = p.color === "white" ? 1 : -1,
@@ -242,9 +249,16 @@ export function pseudo(
         : pattern.range === "slide"
           ? 7
           : pattern.range;
+    const unlock = p.evolved ? d.growth?.unlocks[patternIndex] : undefined;
+    const usage =
+      unlock?.capture && (pattern.usage ?? "both") === "move"
+        ? "both"
+        : (pattern.usage ?? "both");
+    const additiveCannon = pattern.kind === "direction" && !!unlock?.cannon;
+    const additiveStationary = !!unlock?.stationary;
     if (pattern.kind === "direction" && pattern.cannon) {
       out.push(
-        ...cannonRays(s, from, p.color, v, max, pattern.usage ?? "both"),
+        ...cannonRays(s, from, p.color, v, max, usage),
       );
       continue;
     }
@@ -257,13 +271,44 @@ export function pseudo(
         max,
         pattern.kind === "leap"
           ? 2
-          : jumpLimit(pattern.jumpAllies, pattern.canJump),
+          : Math.max(
+              jumpLimit(pattern.jumpAllies, pattern.canJump),
+              unlock?.jumpAllies ?? 0,
+            ),
         pattern.kind === "leap"
           ? 2
-          : jumpLimit(pattern.jumpEnemies, pattern.canJump),
-        pattern.usage ?? "both",
+          : Math.max(
+              jumpLimit(pattern.jumpEnemies, pattern.canJump),
+              unlock?.jumpEnemies ?? 0,
+            ),
+        usage,
       ),
     );
+    if (additiveCannon)
+      out.push(...cannonRays(s, from, p.color, v, max, "capture"));
+    if (additiveStationary)
+      out.push(
+        ...rays(
+          s,
+          from,
+          p.color,
+          v,
+          max,
+          pattern.kind === "leap"
+            ? 2
+            : Math.max(
+                jumpLimit(pattern.jumpAllies, pattern.canJump),
+                unlock?.jumpAllies ?? 0,
+              ),
+          pattern.kind === "leap"
+            ? 2
+            : Math.max(
+                jumpLimit(pattern.jumpEnemies, pattern.canJump),
+                unlock?.jumpEnemies ?? 0,
+              ),
+          "stationary",
+        ),
+      );
   }
   return [
     ...new Map(
@@ -274,6 +319,15 @@ export function pseudo(
 const king = (s: Match, c: Color) => {
   const i = s.board.findIndex((p) => p?.color === c && p.role === "king");
   return i < 0 ? null : { row: Math.floor(i / 8), col: i % 8 };
+};
+export const isRoyal = (piece: Piece, definitions: Definition[]) => {
+  if (piece.role === "king") return true;
+  if (piece.role !== "custom") return false;
+  const definition = definitions.find((item) => item.id === piece.definitionId);
+  return !!(
+    definition?.isCrown ||
+    (piece.evolved && definition?.growth?.unlockCrown)
+  );
 };
 export const threatened = (s: Match, target: Pos, by: Color, d: Definition[]) =>
   s.board.some((piece, i) => {
@@ -451,22 +505,104 @@ export function allLegal(s: Match, d: Definition[]) {
       : [],
   );
 }
+const defaultStats = () => ({
+  white: { captures: 0, losses: 0, evolutions: 0, kingDepth: 8 },
+  black: { captures: 0, losses: 0, evolutions: 0, kingDepth: 8 },
+});
+const enemyDepth = (color: Color, position: Pos) =>
+  color === "white" ? position.row + 1 : 8 - position.row;
+function nearbyEnemyCount(s: Match, center: Pos, color: Color, radius: number) {
+  return s.board.filter((piece, index) => {
+    if (piece?.color !== other(color)) return false;
+    const row = Math.floor(index / 8),
+      col = index % 8;
+    return Math.max(Math.abs(row - center.row), Math.abs(col - center.col)) <= radius;
+  }).length;
+}
+function conditionMet(
+  condition: EvolutionCondition,
+  piece: Piece,
+  position: Pos,
+  match: Match,
+  stats: ReturnType<typeof defaultStats>,
+) {
+  const own = stats[piece.color],
+    foe = stats[other(piece.color)];
+  if (condition.kind === "captures")
+    return (condition.subject === "self" ? piece.captures ?? 0 : own.captures) >= condition.threshold;
+  if (condition.kind === "losses") return own.losses >= condition.threshold;
+  if (condition.kind === "territory")
+    return (condition.subject === "self" ? piece.reachedEnemyDepth ?? 8 : own.kingDepth) <= condition.depth;
+  if (condition.kind === "evolutions")
+    return (condition.side === "ally" ? own.evolutions : foe.evolutions) >= condition.threshold;
+  const center =
+    condition.center === "self" ? position : king(match, piece.color);
+  return !!center && nearbyEnemyCount(match, center, piece.color, condition.radius) >= condition.threshold;
+}
+function applyGrowth(match: Match, definitions: Definition[], statsSnapshot: ReturnType<typeof defaultStats>) {
+  const board = [...match.board],
+    evolved = { white: 0, black: 0 };
+  board.forEach((piece, index) => {
+    if (!piece || piece.role !== "custom" || piece.evolved) return;
+    const definition = definitions.find((item) => item.id === piece.definitionId);
+    if (!definition?.growth) return;
+    const position = { row: Math.floor(index / 8), col: index % 8 };
+    if (!conditionMet(definition.growth.condition, piece, position, match, statsSnapshot)) return;
+    board[index] = { ...piece, evolved: true };
+    evolved[piece.color]++;
+  });
+  if (!evolved.white && !evolved.black) return match;
+  const stats = structuredClone(match.stats ?? defaultStats()),
+    targets = { ...match.targets };
+  for (const color of ["white", "black"] as Color[]) {
+    stats[color].evolutions += evolved[color];
+    const newCrowns = board.filter((piece, index) => {
+      const before = match.board[index];
+      if (!piece || !before || piece.color !== color || before.evolved || !piece.evolved) return false;
+      const definition = definitions.find((item) => item.id === piece.definitionId);
+      return !!definition?.growth?.unlockCrown;
+    }).length;
+    targets[color] += newCrowns;
+  }
+  return { ...match, board, stats, targets };
+}
 export function play(s: Match, m: Move, d: Definition[]) {
   const p = at(s, m.from)!,
     captures = [at(s, m.to), m.next ? at(raw(s, m), m.next.to) : null].filter(
       Boolean,
     ) as Piece[],
     enemy = other(p.color),
-    royalCaptures = captures.filter(
-      (cap) =>
-        cap.role === "king" ||
-        (cap.role === "custom" &&
-          d.find((x) => x.id === cap.definitionId)?.isCrown),
-    );
+    royalCaptures = captures.filter((cap) => isRoyal(cap, d));
   let n = raw(s, m);
   if (m.next) n = raw(n, m.next);
+  const stats = structuredClone(s.stats ?? defaultStats()),
+    capturedCount = captures.length;
+  stats[p.color].captures += capturedCount;
+  stats[enemy].losses += capturedCount;
+  const movingIndex = n.board.findIndex((piece) => piece?.id === p.id);
+  if (movingIndex >= 0) {
+    const moving = n.board[movingIndex]!;
+    const firstPosition = m.stationary ? m.from : m.to;
+    const positions = [
+      firstPosition,
+      ...(m.next ? [m.next.stationary ? firstPosition : m.next.to] : []),
+    ];
+    const reached = Math.min(
+      moving.reachedEnemyDepth ?? 8,
+      ...positions.map((position) => enemyDepth(p.color, position)),
+    );
+    n.board[movingIndex] = {
+      ...moving,
+      captures: (moving.captures ?? 0) + capturedCount,
+      reachedEnemyDepth: reached,
+    };
+    if (p.role === "king") stats[p.color].kingDepth = Math.min(stats[p.color].kingDepth, reached);
+  }
+  n = { ...n, stats };
   if (royalCaptures.length)
     n.lost = { ...n.lost, [enemy]: n.lost[enemy] + royalCaptures.length };
+  const statsSnapshot = structuredClone(stats);
+  n = applyGrowth(n, d, statsSnapshot);
   const win =
     s.preset === "royal-all"
       ? n.lost[enemy] >= n.targets[enemy]
@@ -492,8 +628,7 @@ export function play(s: Match, m: Move, d: Definition[]) {
       : `${enemy === "white" ? "白" : "黒"}の手番です。`,
   };
   if (
-    s.preset === "classic" &&
-    royalCaptures.some((cap) => cap.role === "custom")
+    s.preset === "classic" && royalCaptures.some((cap) => cap.role === "custom")
   )
     return { ...n, winner: p.color, message: "王冠駒が取られました。" };
   if (s.preset === "classic" && !n.winner) {

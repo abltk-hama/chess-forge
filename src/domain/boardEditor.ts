@@ -25,6 +25,9 @@ export function boardDraftFromSetup(
           role: piece.role,
           definitionId: piece.definitionId,
           moved: false,
+          evolved: false,
+          captures: 0,
+          reachedEnemyDepth: 8,
         }
       : null,
   );
@@ -32,8 +35,19 @@ export function boardDraftFromSetup(
 
 const isCrown = (piece: DraftPiece, definitions: Definition[]) =>
   piece.role === "custom" &&
-  definitions.find((definition) => definition.id === piece.definitionId)
-    ?.isCrown;
+  (() => {
+    const definition = definitions.find(
+      (item) => item.id === piece.definitionId,
+    );
+    return definition?.isCrown || (piece.evolved && definition?.growth?.unlockCrown);
+  })();
+const isPotentialCrown = (piece: DraftPiece, definitions: Definition[]) => {
+  const definition =
+    piece.role === "custom"
+      ? definitions.find((item) => item.id === piece.definitionId)
+      : undefined;
+  return !!(definition?.isCrown || definition?.growth?.unlockCrown);
+};
 
 function count(
   draft: BoardDraft,
@@ -60,7 +74,7 @@ export function boardDraftErrors(
       errors.push(`${label}Kingを1体配置してください。`);
     if (
       preset === "royal-all" &&
-      count(draft, color, (piece) => !!isCrown(piece, definitions)) >= 2
+      count(draft, color, (piece) => isPotentialCrown(piece, definitions)) >= 2
     )
       errors.push(`Royal Hunt ALLでは${label}Crownは1体までです。`);
   }
@@ -104,6 +118,20 @@ export function createMatchFromDraft(
     winner: null,
     draw: false,
     message: `${turn === "white" ? "白" : "黒"}の手番です。`,
+    stats: {
+      white: {
+        captures: 0,
+        losses: 0,
+        evolutions: 0,
+        kingDepth: 8,
+      },
+      black: {
+        captures: 0,
+        losses: 0,
+        evolutions: 0,
+        kingDepth: 8,
+      },
+    },
   };
 }
 

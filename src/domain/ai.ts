@@ -1,5 +1,5 @@
-import { cost } from "./cost";
-import { allLegal, play, threatened } from "./game";
+import { cost, evolvedDefinition, growthCost } from "./cost";
+import { allLegal, isRoyal, play, threatened } from "./game";
 import {
   idx,
   type AIDifficulty,
@@ -27,7 +27,12 @@ function pieceValue(piece: Piece, defs: Definition[]) {
   if (piece.role !== "custom") return standardValue[piece.role];
   const definition = defs.find((item) => item.id === piece.definitionId);
   if (!definition) return 100;
-  const movementCost = cost({ ...definition, isCrown: false });
+  const valuedDefinition = piece.evolved
+    ? evolvedDefinition(definition)
+    : definition;
+  const movementCost = piece.evolved
+    ? cost({ ...valuedDefinition, isCrown: false })
+    : growthCost({ ...definition, isCrown: false }).total;
   return Math.max(100, Math.round((movementCost * 100) / 3));
 }
 
@@ -48,12 +53,8 @@ export function evaluate(match: Match, defs: Definition[]) {
       col = index % 8;
     const center = 7 - (Math.abs(3.5 - row) + Math.abs(3.5 - col));
     score += sign * center * 2;
-    const definition =
-      piece.role === "custom"
-        ? defs.find((item) => item.id === piece.definitionId)
-        : undefined;
     if (
-      (piece.role === "king" || definition?.isCrown) &&
+      isRoyal(piece, defs) &&
       threatened(
         match,
         { row, col },

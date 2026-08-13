@@ -56,6 +56,36 @@ describe("App", () => {
     expect(screen.getByText("移動セット 4")).toBeInTheDocument();
   });
 
+  it("configures growth conditions and unlocked abilities", () => {
+    render(<App />);
+    fireEvent.click(screen.getAllByRole("button", { name: "駒を作る" })[0]);
+    fireEvent.change(screen.getByLabelText("名前"), {
+      target: { value: "成長兵" },
+    });
+    fireEvent.change(screen.getByLabelText("記号"), {
+      target: { value: "GG" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "前" }));
+    fireEvent.change(screen.getByLabelText("移動セット1の用途"), {
+      target: { value: "move" },
+    });
+    fireEvent.change(screen.getByLabelText("進化方式"), {
+      target: { value: "growth" },
+    });
+    fireEvent.change(screen.getByLabelText("成長条件カテゴリー"), {
+      target: { value: "nearbyEnemies" },
+    });
+    fireEvent.change(screen.getByLabelText("範囲"), {
+      target: { value: "2" },
+    });
+    fireEvent.click(screen.getByLabelText("通常捕獲"));
+
+    expect(screen.getByText(/通常 \d+ \+ 成長 \d+/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "保存" })).toBeEnabled();
+    fireEvent.click(screen.getByRole("button", { name: "保存" }));
+    expect(screen.getByText(/成長あり/)).toBeVisible();
+  });
+
   it("configures initial-only and cannon movement", () => {
     render(<App />);
     fireEvent.click(screen.getAllByRole("button", { name: "駒を作る" })[0]);

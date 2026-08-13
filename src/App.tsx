@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import "./App.css";
 import {
-  cost,
+  definitionCost,
+  evolvedDefinition,
   errors,
+  growthCost,
   MAX_DEFINITIONS,
   normalize,
   RESERVED_SYMBOLS,
@@ -38,6 +40,7 @@ import {
   idx,
   other,
   type Definition,
+  type EvolutionCondition,
   type AIDifficulty,
   type Color,
   type GameMode,
@@ -130,6 +133,186 @@ const knightVectors: Vec[] = [
   { dx: -2, dy: 1 },
   { dx: -1, dy: 2 },
 ];
+function GrowthConditionFields({
+  condition,
+  onChange,
+}: {
+  condition: EvolutionCondition;
+  onChange: (condition: EvolutionCondition) => void;
+}) {
+  if (condition.kind === "captures")
+    return (
+      <>
+        <label>
+          対象
+          <select
+            aria-label="捕獲条件の対象"
+            value={condition.subject}
+            onChange={(event) => {
+              const subject = event.target.value as "self" | "allies";
+              onChange({
+                ...condition,
+                subject,
+                threshold: subject === "self" ? 1 : 2,
+              });
+            }}
+          >
+            <option value="self">この駒</option>
+            <option value="allies">自陣営</option>
+          </select>
+        </label>
+        <ThresholdSelect
+          label="必要捕獲数"
+          value={condition.threshold}
+          values={condition.subject === "self" ? [1, 2, 3] : [2, 4, 6, 8]}
+          onChange={(threshold) => onChange({ ...condition, threshold })}
+        />
+      </>
+    );
+  if (condition.kind === "losses")
+    return (
+      <ThresholdSelect
+        label="必要損失数"
+        value={condition.threshold}
+        values={[2, 4, 6, 8]}
+        onChange={(threshold) => onChange({ ...condition, threshold })}
+      />
+    );
+  if (condition.kind === "territory")
+    return (
+      <>
+        <label>
+          到達する駒
+          <select
+            aria-label="敵陣到達の対象"
+            value={condition.subject}
+            onChange={(event) =>
+              onChange({
+                ...condition,
+                subject: event.target.value as "self" | "king",
+              })
+            }
+          >
+            <option value="self">この駒</option>
+            <option value="king">King</option>
+          </select>
+        </label>
+        <ThresholdSelect
+          label="敵陣奥からの列数"
+          value={condition.depth}
+          values={[1, 2, 3]}
+          suffix="列以内"
+          onChange={(depth) =>
+            onChange({ ...condition, depth: depth as 1 | 2 | 3 })
+          }
+        />
+      </>
+    );
+  if (condition.kind === "evolutions")
+    return (
+      <>
+        <label>
+          進化する陣営
+          <select
+            aria-label="進化数条件の陣営"
+            value={condition.side}
+            onChange={(event) =>
+              onChange({
+                ...condition,
+                side: event.target.value as "ally" | "enemy",
+              })
+            }
+          >
+            <option value="ally">味方</option>
+            <option value="enemy">相手</option>
+          </select>
+        </label>
+        <ThresholdSelect
+          label="必要進化数"
+          value={condition.threshold}
+          values={condition.side === "ally" ? [1, 2, 3, 4] : [1, 2, 3]}
+          onChange={(threshold) => onChange({ ...condition, threshold })}
+        />
+      </>
+    );
+  return (
+    <>
+      <label>
+        範囲の中心
+        <select
+          aria-label="周辺条件の中心"
+          value={condition.center}
+          onChange={(event) =>
+            onChange({
+              ...condition,
+              center: event.target.value as "self" | "king",
+            })
+          }
+        >
+          <option value="self">この駒</option>
+          <option value="king">King</option>
+        </select>
+      </label>
+      <ThresholdSelect
+        label="範囲"
+        value={condition.radius}
+        values={[1, 2, 3]}
+        labels={["3×3", "5×5", "7×7"]}
+        onChange={(radius) =>
+          onChange({
+            ...condition,
+            radius: radius as 1 | 2 | 3,
+            threshold: radius === 1 ? 1 : radius === 2 ? 2 : 3,
+          })
+        }
+      />
+      <ThresholdSelect
+        label="必要な敵数"
+        value={condition.threshold}
+        values={
+          condition.radius === 1
+            ? [1, 2, 3]
+            : condition.radius === 2
+              ? [2, 3, 5]
+              : [3, 5, 7, 9]
+        }
+        onChange={(threshold) => onChange({ ...condition, threshold })}
+      />
+    </>
+  );
+}
+function ThresholdSelect({
+  label,
+  value,
+  values,
+  labels,
+  suffix = "体",
+  onChange,
+}: {
+  label: string;
+  value: number;
+  values: number[];
+  labels?: string[];
+  suffix?: string;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <label>
+      {label}
+      <select
+        aria-label={label}
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value))}
+      >
+        {values.map((item, index) => (
+          <option value={item} key={item}>
+            {labels?.[index] ?? `${item}${suffix}`}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
 function Editor({
   all,
   onSave,
@@ -163,6 +346,25 @@ function Editor({
       ...d,
       patterns: d.patterns.map((p, i) => (i === index ? pattern : p)),
     });
+  const setGrowthCondition = (condition: EvolutionCondition) =>
+    setD({
+      ...d,
+      growth: d.growth
+        ? { ...d.growth, condition }
+        : { condition, unlocks: {} },
+    });
+  const updateUnlock = (
+    index: number,
+    values: Partial<NonNullable<Definition["growth"]>["unlocks"][number]>,
+  ) => {
+    if (!d.growth) return;
+    const current = d.growth.unlocks[index] ?? {};
+    const next = { ...current, ...values };
+    const unlocks = { ...d.growth.unlocks };
+    if (Object.values(next).some(Boolean)) unlocks[index] = next;
+    else delete unlocks[index];
+    setD({ ...d, growth: { ...d.growth, unlocks } });
+  };
   const toggle = (index: number, v: Vec) => {
     const pattern = d.patterns[index];
     const selected = pattern.vectors.some(
@@ -181,7 +383,8 @@ function Editor({
         ? ["各移動セットに移動先が必要です。"]
         : []),
     ],
-    n = cost(d),
+    growthPricing = growthCost(d),
+    n = growthPricing.total,
     canSave = !e.length && (editing || all.length < MAX_DEFINITIONS);
   return (
     <section>
@@ -262,6 +465,21 @@ function Editor({
                       setD({
                         ...d,
                         patterns: d.patterns.filter((_, i) => i !== index),
+                        growth: d.growth
+                          ? {
+                              ...d.growth,
+                              unlocks: Object.fromEntries(
+                                Object.entries(d.growth.unlocks)
+                                  .filter(([key]) => Number(key) !== index)
+                                  .map(([key, value]) => [
+                                    Number(key) > index
+                                      ? Number(key) - 1
+                                      : Number(key),
+                                    value,
+                                  ]),
+                              ),
+                            }
+                          : undefined,
                       })
                     }
                   >
@@ -510,15 +728,220 @@ function Editor({
             <input
               type="checkbox"
               checked={d.isCrown}
-              onChange={(x) => setD({ ...d, isCrown: x.target.checked })}
+              onChange={(x) =>
+                setD({
+                  ...d,
+                  isCrown: x.target.checked,
+                  growth:
+                    x.target.checked && d.growth?.unlockCrown
+                      ? { ...d.growth, unlockCrown: false }
+                      : d.growth,
+                })
+              }
             />
             王冠 (+25)
           </label>
+          <fieldset className="pattern-card growth-card">
+            <legend>成長</legend>
+            <label>
+              進化方式
+              <select
+                aria-label="進化方式"
+                value={d.growth ? "growth" : "none"}
+                onChange={(event) =>
+                  setD({
+                    ...d,
+                    growth:
+                      event.target.value === "growth"
+                        ? {
+                            condition: {
+                              kind: "captures",
+                              subject: "self",
+                              threshold: 1,
+                            },
+                            unlocks: {},
+                          }
+                        : undefined,
+                  })
+                }
+              >
+                <option value="none">なし</option>
+                <option value="growth">成長</option>
+              </select>
+            </label>
+            {d.growth && (
+              <>
+                <label>
+                  条件カテゴリー
+                  <select
+                    aria-label="成長条件カテゴリー"
+                    value={d.growth.condition.kind}
+                    onChange={(event) => {
+                      const kind = event.target.value;
+                      setGrowthCondition(
+                        kind === "losses"
+                          ? { kind, threshold: 2 }
+                          : kind === "territory"
+                            ? { kind, subject: "self", depth: 3 }
+                            : kind === "evolutions"
+                              ? {
+                                  kind,
+                                  side: "ally",
+                                  threshold: 1,
+                                }
+                              : kind === "nearbyEnemies"
+                                ? {
+                                    kind,
+                                    center: "self",
+                                    radius: 1,
+                                    threshold: 1,
+                                  }
+                                : {
+                                    kind: "captures",
+                                    subject: "self",
+                                    threshold: 1,
+                                  },
+                      );
+                    }}
+                  >
+                    <option value="captures">捕獲数</option>
+                    <option value="losses">自陣営の損失数</option>
+                    <option value="territory">敵陣到達</option>
+                    <option value="evolutions">進化数</option>
+                    <option value="nearbyEnemies">周辺の敵数</option>
+                  </select>
+                </label>
+                <GrowthConditionFields
+                  condition={d.growth.condition}
+                  onChange={setGrowthCondition}
+                />
+                <label>
+                  <input
+                    type="checkbox"
+                    disabled={d.isCrown}
+                    checked={!!d.growth.unlockCrown}
+                    onChange={(event) =>
+                      setD({
+                        ...d,
+                        growth: {
+                          ...d.growth!,
+                          unlockCrown: event.target.checked,
+                        },
+                      })
+                    }
+                  />
+                  成長後にCrown化
+                </label>
+                {d.patterns.map((pattern, index) => {
+                  const unlock = d.growth?.unlocks[index] ?? {};
+                  const moveOnly = (pattern.usage ?? "both") === "move";
+                  const ranged =
+                    pattern.kind === "direction" && pattern.range !== 1;
+                  return (
+                    <fieldset className="growth-unlock" key={index}>
+                      <legend>移動セット {index + 1} の解放</legend>
+                      <label>
+                        <input
+                          type="checkbox"
+                          disabled={!moveOnly || !!unlock.stationary}
+                          checked={!!unlock.capture}
+                          onChange={(event) =>
+                            updateUnlock(index, {
+                              capture: event.target.checked,
+                            })
+                          }
+                        />
+                        通常捕獲
+                      </label>
+                      <label>
+                        <input
+                          type="checkbox"
+                          disabled={!moveOnly || !!unlock.capture}
+                          checked={!!unlock.stationary}
+                          onChange={(event) =>
+                            updateUnlock(index, {
+                              stationary: event.target.checked,
+                            })
+                          }
+                        />
+                        静止捕獲
+                      </label>
+                      {ranged && (
+                        <>
+                          <label>
+                            成長後の味方飛び越し
+                            <select
+                              aria-label={`移動セット${index + 1}の成長後味方飛び越し`}
+                              disabled={!!unlock.cannon}
+                              value={unlock.jumpAllies ?? 0}
+                              onChange={(event) =>
+                                updateUnlock(index, {
+                                  jumpAllies: Number(event.target.value) as
+                                    | 0
+                                    | 1
+                                    | 2,
+                                })
+                              }
+                            >
+                              <option value="0">なし</option>
+                              <option value="1">1枚</option>
+                              <option value="2">2枚</option>
+                            </select>
+                          </label>
+                          <label>
+                            成長後の敵飛び越し
+                            <select
+                              aria-label={`移動セット${index + 1}の成長後敵飛び越し`}
+                              disabled={!!unlock.cannon}
+                              value={unlock.jumpEnemies ?? 0}
+                              onChange={(event) =>
+                                updateUnlock(index, {
+                                  jumpEnemies: Number(event.target.value) as
+                                    | 0
+                                    | 1
+                                    | 2,
+                                })
+                              }
+                            >
+                              <option value="0">なし</option>
+                              <option value="1">1枚</option>
+                              <option value="2">2枚</option>
+                            </select>
+                          </label>
+                          <label>
+                            <input
+                              type="checkbox"
+                              disabled={
+                                !!unlock.jumpAllies || !!unlock.jumpEnemies
+                              }
+                              checked={!!unlock.cannon}
+                              onChange={(event) =>
+                                updateUnlock(index, {
+                                  cannon: event.target.checked,
+                                })
+                              }
+                            />
+                            追加キャノン捕獲
+                          </label>
+                        </>
+                      )}
+                    </fieldset>
+                  );
+                })}
+              </>
+            )}
+          </fieldset>
         </div>
         <div className="panel">
           <h3>
             コスト <strong className={n > 30 ? "danger" : ""}>{n}/30</strong>
           </h3>
+          {d.growth && (
+            <p>
+              通常 {growthPricing.base} + 成長 {growthPricing.premium}（難度
+              {growthPricing.difficulty}）
+            </p>
+          )}
           <Preview d={d} />
           {e.map((x) => (
             <p className="error" key={x}>
@@ -549,7 +972,8 @@ function Editor({
               {x.symbol} {x.name}
             </b>
             <span>
-              {cost(x)}/30 {x.isCrown ? "♛王冠" : ""}{" "}
+              {definitionCost(x)}/30 {x.isCrown ? "♛王冠" : ""}{" "}
+              {x.growth ? "成長あり" : ""}{" "}
               {usesLegacyJump(x) ? "旧コスト" : ""}
             </span>
             <button onClick={() => setD(editable(x))}>編集</button>
@@ -679,6 +1103,7 @@ function PositionEditor({
   const [tool, setTool] = useState("standard:pawn"),
     [color, setColor] = useState<Color>("white"),
     [moved, setMoved] = useState(false),
+    [evolved, setEvolved] = useState(false),
     [erasing, setErasing] = useState(false),
     [previous, setPrevious] = useState<BoardDraft | null>(null);
   const replaceDraft = (next: BoardDraft) => {
@@ -688,9 +1113,20 @@ function PositionEditor({
   const selectedPiece = (): DraftPiece => {
     const [kind, value] = tool.split(":");
     return kind === "custom"
-      ? { color, role: "custom", definitionId: value, moved }
+      ? {
+          color,
+          role: "custom",
+          definitionId: value,
+          moved,
+          evolved,
+          captures: 0,
+          reachedEnemyDepth: 8,
+        }
       : { color, role: value as Exclude<Role, "custom">, moved };
   };
+  const selectedCustom = tool.startsWith("custom:")
+    ? defs.find((definition) => definition.id === tool.slice(7))
+    : undefined;
   return (
     <div className="position-editor">
       <div className="board editor-board" aria-label="局面編集盤">
@@ -722,7 +1158,10 @@ function PositionEditor({
             aria-label="局面に配置する駒"
             disabled={erasing}
             value={tool}
-            onChange={(event) => setTool(event.target.value)}
+            onChange={(event) => {
+              setTool(event.target.value);
+              if (!event.target.value.startsWith("custom:")) setEvolved(false);
+            }}
           >
             <optgroup label="標準駒">
               {editorRoles.map(({ role, label }) => (
@@ -763,6 +1202,15 @@ function PositionEditor({
             onChange={(event) => setMoved(event.target.checked)}
           />
           移動済みとして配置
+        </label>
+        <label className="inline-check">
+          <input
+            type="checkbox"
+            disabled={erasing || !selectedCustom?.growth}
+            checked={evolved && !!selectedCustom?.growth}
+            onChange={(event) => setEvolved(event.target.checked)}
+          />
+          成長済みとして配置
         </label>
         <div className="position-tool-actions">
           <button
@@ -847,8 +1295,12 @@ function SetupView({
         (piece) =>
           piece?.color === color &&
           piece.role === "custom" &&
-          defs.find((definition) => definition.id === piece.definitionId)
-            ?.isCrown,
+          (() => {
+            const definition = defs.find(
+              (item) => item.id === piece.definitionId,
+            );
+            return definition?.isCrown || definition?.growth?.unlockCrown;
+          })(),
       ).length,
   );
   const tooManyCrownsForAll =
@@ -1013,7 +1465,7 @@ function SetupView({
                       disabled={!canPlace(definition)}
                       key={definition.id}
                     >
-                      {definition.symbol} {definition.name} ({cost(definition)})
+                      {definition.symbol} {definition.name} ({definitionCost(definition)})
                       {definition.isCrown ? " Crown" : ""}
                       {usesLegacyJump(definition) ? " 旧コスト" : ""}
                     </option>
@@ -1074,6 +1526,37 @@ function SetupView({
 }
 const orthogonal = directions.filter((v) => v.dx === 0 || v.dy === 0);
 const diagonal = directions.filter((v) => v.dx !== 0 && v.dy !== 0);
+function conditionDescription(condition: EvolutionCondition) {
+  if (condition.kind === "captures")
+    return `${condition.subject === "self" ? "この駒" : "自陣営"}が${condition.threshold}体捕獲`;
+  if (condition.kind === "losses")
+    return `自陣営が${condition.threshold}体捕獲される`;
+  if (condition.kind === "territory")
+    return `${condition.subject === "self" ? "この駒" : "King"}が敵陣奥から${condition.depth}列以内へ到達`;
+  if (condition.kind === "evolutions")
+    return `${condition.side === "ally" ? "味方" : "相手"}が${condition.threshold}体進化`;
+  return `${condition.center === "self" ? "この駒" : "King"}の${condition.radius * 2 + 1}×${condition.radius * 2 + 1}以内に敵${condition.threshold}体`;
+}
+function growthProgress(piece: NonNullable<Match["board"][number]>, match: Match, definition: Definition) {
+  if (piece.evolved) return "達成済み";
+  const condition = definition.growth!.condition,
+    stats = match.stats?.[piece.color],
+    enemyStats = match.stats?.[other(piece.color)];
+  if (condition.kind === "captures")
+    return `${condition.subject === "self" ? piece.captures ?? 0 : stats?.captures ?? 0}/${condition.threshold}`;
+  if (condition.kind === "losses")
+    return `${stats?.losses ?? 0}/${condition.threshold}`;
+  if (condition.kind === "evolutions")
+    return `${condition.side === "ally" ? stats?.evolutions ?? 0 : enemyStats?.evolutions ?? 0}/${condition.threshold}`;
+  if (condition.kind === "territory") {
+    const depth =
+      condition.subject === "self"
+        ? piece.reachedEnemyDepth ?? 8
+        : stats?.kingDepth ?? 8;
+    return depth <= condition.depth ? "達成待ち" : `あと${depth - condition.depth}列`;
+  }
+  return "手番終了時に判定";
+}
 const standardGuides: { key: string; label: string; definition: Definition }[] =
   [
     [
@@ -1171,21 +1654,26 @@ function MovementViewer({
   ];
   const [selected, setSelected] = useState(guides[0].key);
   const guide = guides.find((item) => item.key === selected) ?? guides[0];
+  const [showGrowth, setShowGrowth] = useState(false);
+  const shownDefinition =
+    showGrowth && guide.definition.growth
+      ? evolvedDefinition(guide.definition)
+      : guide.definition;
   const custom = !guide.key.startsWith("standard:");
-  const allyJump = guide.definition.patterns.some(
+  const allyJump = shownDefinition.patterns.some(
     (p) => p.kind === "direction" && (p.jumpAllies || p.canJump),
   );
-  const enemyJump = guide.definition.patterns.some(
+  const enemyJump = shownDefinition.patterns.some(
     (p) => p.kind === "direction" && (p.jumpEnemies || p.canJump),
   );
-  const initialOnly = guide.definition.patterns.some((p) => p.initialOnly);
-  const cannon = guide.definition.patterns.some(
+  const initialOnly = shownDefinition.patterns.some((p) => p.initialOnly);
+  const cannon = shownDefinition.patterns.some(
     (p) => p.kind === "direction" && p.cannon,
   );
-  const stationary = guide.definition.patterns.some(
+  const stationary = shownDefinition.patterns.some(
     (p) => (p.usage ?? "both") === "stationary",
   );
-  const multiMove = guide.definition.patterns.some((p) => p.phase === 2);
+  const multiMove = shownDefinition.patterns.some((p) => p.phase === 2);
   return (
     <div className="movement-viewer">
       {heading && <h3>駒の移動方法</h3>}
@@ -1203,7 +1691,20 @@ function MovementViewer({
           ))}
         </select>
       </label>
-      <Preview d={guide.definition} />
+      {guide.definition.growth && (
+        <label>
+          表示状態
+          <select
+            aria-label="成長前後の表示"
+            value={showGrowth ? "after" : "before"}
+            onChange={(event) => setShowGrowth(event.target.value === "after")}
+          >
+            <option value="before">成長前</option>
+            <option value="after">成長後</option>
+          </select>
+        </label>
+      )}
+      <Preview d={shownDefinition} />
       <div className="movement-legend">
         <span className="legend-both">移動・捕獲</span>
         <span className="legend-move">移動専用</span>
@@ -1212,8 +1713,11 @@ function MovementViewer({
         <span className="legend-initial">初回限定</span>
         <span className="legend-cannon">キャノン</span>
       </div>
-      <p>{custom ? `コスト ${cost(guide.definition)}/30` : "標準駒"}</p>
+      <p>{custom ? `コスト ${definitionCost(guide.definition)}/30` : "標準駒"}</p>
       {guide.definition.isCrown && <p>♛ Crown</p>}
+      {guide.definition.growth && (
+        <p>成長条件：{conditionDescription(guide.definition.growth.condition)}</p>
+      )}
       {(allyJump || enemyJump) && (
         <p>
           飛び越し：
@@ -1457,7 +1961,9 @@ function Game({
                   key={i}
                 >
                   {piece && (
-                    <span className={`${piece.color} ${pieceFocusClass}`}>
+                    <span
+                      className={`${piece.color} ${pieceFocusClass} ${piece.evolved ? "piece-evolved" : ""}`}
+                    >
                       {pieceText(piece, defs)}
                     </span>
                   )}
@@ -1485,6 +1991,23 @@ function Game({
             <span className="legend-range-stationary">静止捕獲</span>
             <span className="legend-range-second">2回目を含む</span>
           </div>
+          {inspectedPiece?.role === "custom" &&
+            (() => {
+              const definition = defs.find(
+                (item) => item.id === inspectedPiece.definitionId,
+              );
+              return definition?.growth ? (
+                <div className="growth-status">
+                  <strong>
+                    {inspectedPiece.evolved ? "成長済み" : "成長進捗"}
+                  </strong>
+                  <p>{conditionDescription(definition.growth.condition)}</p>
+                  <p>
+                    進捗：{growthProgress(inspectedPiece, match, definition)}
+                  </p>
+                </div>
+              ) : null;
+            })()}
           {pending && (
             <button
               onClick={() => {

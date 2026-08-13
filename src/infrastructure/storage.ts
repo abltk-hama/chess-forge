@@ -1,4 +1,4 @@
-import { cost, errors, MAX_DEFINITIONS } from "../domain/cost";
+import { definitionCost, errors, MAX_DEFINITIONS } from "../domain/cost";
 import {
   formationErrors,
   formationFromSetup,
@@ -30,7 +30,7 @@ export function parse(raw: string): SaveData {
   if (
     data.definitions.length > MAX_DEFINITIONS ||
     data.definitions.some(
-      (item) => errors(item, data.definitions).length || cost(item) > 30,
+      (item) => errors(item, data.definitions).length || definitionCost(item) > 30,
     )
   ) {
     throw new Error("駒定義が制約に違反しています。");
@@ -112,6 +112,22 @@ export function loadMatch(): SuspendedMatchData | null {
     !Array.isArray(data.match.history)
   )
     throw new Error("対局保存データが壊れています。");
+  if (!data.match.stats) {
+    data.match.stats = {
+      white: { captures: 0, losses: 0, evolutions: 0, kingDepth: 8 },
+      black: { captures: 0, losses: 0, evolutions: 0, kingDepth: 8 },
+    };
+    data.match.board = data.match.board.map((piece) =>
+      piece
+        ? {
+            ...piece,
+            evolved: false,
+            captures: 0,
+            reachedEnemyDepth: 8,
+          }
+        : null,
+    );
+  }
   return data;
 }
 

@@ -1,4 +1,4 @@
-import { cost } from "./cost";
+import { definitionCost } from "./cost";
 import type { Definition, FormationMode, Role, Setup } from "./types";
 
 export const backRoles: Role[] = [
@@ -34,7 +34,10 @@ export const formationMode = (setup: Setup): FormationMode =>
 
 export function crownCount(formation: (string | null)[], defs: Definition[]) {
   return formation.filter(
-    (id) => defs.find((definition) => definition.id === id)?.isCrown,
+    (id) => {
+      const definition = defs.find((item) => item.id === id);
+      return definition?.isCrown || definition?.growth?.unlockCrown;
+    },
   ).length;
 }
 
@@ -62,7 +65,7 @@ export function formationErrors(
   if (
     formation.some((id) => {
       const definition = defs.find((item) => item.id === id);
-      return definition && cost(definition) > 30;
+      return definition && definitionCost(definition) > 30;
     })
   )
     errors.push("配置できるオリジナル駒は30点以下です。");
@@ -71,11 +74,11 @@ export function formationErrors(
   formation.forEach((id, index) => {
     const definition = defs.find((item) => item.id === id);
     if (!definition) return;
-    if (cost(definition) > slotLimit(index))
+    if (definitionCost(definition) > slotLimit(index))
       errors.push(
         `${index >= 8 ? "Pawn" : backRoles[index]}枠のコスト上限を超えています。`,
       );
-    if (definition.isCrown && index !== 3)
+    if ((definition.isCrown || definition.growth?.unlockCrown) && index !== 3)
       errors.push("バランス配置のCrownはQueen位置にだけ配置できます。");
   });
   if (crownCount(formation, defs) > 1)
@@ -85,14 +88,18 @@ export function formationErrors(
     return definition ? [definition] : [];
   });
   const pawnBudget = pawnDefinitions.reduce(
-    (sum, definition) => sum + (cost(definition) <= 10 ? 1 : 2),
+    (sum, definition) => sum + (definitionCost(definition) <= 10 ? 1 : 2),
     0,
   );
   if (pawnBudget > 4)
     errors.push(
       "Pawn枠の置換予算を超えています（10点以下=1、11～15点=2、予算4）。",
     );
-  if (pawnDefinitions.some((definition) => definition.isCrown))
+  if (
+    pawnDefinitions.some(
+      (definition) => definition.isCrown || definition.growth?.unlockCrown,
+    )
+  )
     errors.push("バランス配置のPawn枠へCrownは配置できません。");
   return [...new Set(errors)];
 }
