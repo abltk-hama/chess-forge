@@ -231,6 +231,7 @@ export function pseudo(
   from: Pos,
   defs: Definition[],
   phase: 1 | 2 = 1,
+  trigger: "normal" | "after-capture" = "normal",
 ) {
   const p = at(s, from);
   if (!p) return [];
@@ -243,7 +244,10 @@ export function pseudo(
   const out: Move[] = [];
   for (const [patternIndex, pattern] of d.patterns.entries()) {
     if ((pattern.phase ?? 1) !== phase) continue;
+    if (phase === 2 && (pattern.secondTrigger ?? "normal") !== trigger) continue;
+    if (pattern.evolutionOnly && !p.evolved) continue;
     if (pattern.initialOnly && p.moved) continue;
+    if (pattern.evolvedInitialOnly && (!p.evolved || p.evolvedMoved)) continue;
     const sign = p.color === "white" ? 1 : -1,
       v = pattern.vectors.map((x) => ({ dx: x.dx, dy: x.dy * sign }));
     const max =
@@ -332,24 +336,15 @@ export const isRoyal = (piece: Piece, definitions: Definition[]) => {
     (piece.evolved && definition?.growth?.unlockCrown)
   );
 };
-export const threatened = (s: Match, target: Pos, by: Color, d: Definition[]) =>
+export const threatened = (s: Match, target: Pos, by: Color, d: Definition[]): boolean =>
   s.board.some((piece, i) => {
     if (piece?.color !== by) return false;
     const from = { row: Math.floor(i / 8), col: i % 8 };
-    const first = pseudo(s, from, d);
-    if (first.some((move) => eq(move.to, target))) return true;
-    if (piece.role !== "custom") return false;
-    const definition = d.find((item) => item.id === piece.definitionId);
-    if (!definition?.patterns.some((pattern) => pattern.phase === 2))
-      return false;
-    return first.some((move) => {
-      if (at(s, move.to)) return false;
-      const afterFirst = raw(s, move);
-      const secondFrom = move.stationary ? from : move.to;
-      return pseudo(afterFirst, secondFrom, d, 2).some((next) =>
-        eq(next.to, target),
-      );
-    });
+    return legal(
+      { ...s, preset: "royal-any", turn: by, winner: null, draw: false },
+      from,
+      d,
+    ).some((move) => eq(move.next?.to ?? move.to, target));
   });
 
 export interface RangeMark {
@@ -438,14 +433,26 @@ export function inspectRange(s: Match, from: Pos, d: Definition[]) {
 function raw(s: Match, m: Move) {
   const b = [...s.board],
     p = b[idx(m.from)]!;
+  if (m.transit) return { ...s, board: b };
+  if (m.swap) {
+    const target = b[idx(m.to)]!;
+    b[idx(m.from)] = target;
+    b[idx(m.to)] = {
+      ...p,
+      moved: true,
+      evolvedMoved: p.evolved ? true : p.evolvedMoved,
+      globalSwapUsed: m.swap === "global" ? true : p.globalSwapUsed,
+    };
+    return { ...s, board: b };
+  }
   if (m.stationary) {
     b[idx(m.to)] = null;
-    b[idx(m.from)] = { ...p, moved: true };
+    b[idx(m.from)] = { ...p, moved: true, evolvedMoved: p.evolved ? true : p.evolvedMoved };
     return { ...s, board: b };
   }
   if (m.enPassant) b[idx({ row: m.from.row, col: m.to.col })] = null;
   b[idx(m.from)] = null;
-  b[idx(m.to)] = { ...p, role: m.promotion ? "queen" : p.role, moved: true };
+  b[idx(m.to)] = { ...p, role: m.promotion ? "queen" : p.role, moved: true, evolvedMoved: p.evolved ? true : p.evolvedMoved };
   if (m.castle) {
     const f = { row: m.from.row, col: m.castle === "king" ? 7 : 0 },
       t = { row: m.from.row, col: m.castle === "king" ? 5 : 3 },
@@ -455,11 +462,11 @@ function raw(s: Match, m: Move) {
   }
   return { ...s, board: b };
 }
-export function legal(s: Match, from: Pos, d: Definition[]) {
+export function legal(s: Match, from: Pos, d: Definition[]): Move[] {
   const p = at(s, from);
   if (!p || p.color !== s.turn || s.winner || s.draw) return [];
   const first = pseudo(s, from, d);
-  const base =
+  const base: Move[] =
     s.preset !== "classic"
       ? first
       : first.filter((x) => {
@@ -483,13 +490,42 @@ export function legal(s: Match, from: Pos, d: Definition[]) {
         });
   if (p.role !== "custom") return base;
   const definition = d.find((item) => item.id === p.definitionId);
-  if (!definition?.patterns.some((pattern) => pattern.phase === 2)) return base;
+  if (!definition) return base;
+  const activeDefinition = p.evolved && definition.transformation ? transformedDefinition(definition) : definition;
   const combined: Move[] = [...base];
+  if (p.evolved) {
+    const evolution = definition.growth ?? definition.transformation;
+    const swapMoves: Move[] = [];
+    if (evolution?.localSwap) {
+      for (let i = 0; i < 64; i++) {
+        const target = s.board[i];
+        if (!target || target.color !== p.color || target.id === p.id) continue;
+        const to = { row: Math.floor(i / 8), col: i % 8 };
+        const board = [...s.board]; board[i] = null;
+        if (pseudo({ ...s, board }, from, d).some((move) => eq(move.to, to))) swapMoves.push({ from, to, swap: "local" });
+      }
+    }
+    if (evolution?.globalSwap && !p.globalSwapUsed) {
+      s.board.forEach((target, i) => {
+        if (target?.color === p.color && target.id !== p.id) swapMoves.push({ from, to: { row: Math.floor(i / 8), col: i % 8 }, swap: "global" });
+      });
+    }
+    combined.push(...swapMoves.filter((move) => {
+      if (s.preset !== "classic") return true;
+      const after = raw(s, move), royal = king(after, p.color);
+      return !!royal && !threatened(after, royal, other(p.color), d);
+    }));
+  }
+  if (!activeDefinition.patterns.some((pattern) => pattern.phase === 2)) return combined;
   for (const firstMove of base) {
     const afterFirst = raw(s, firstMove);
     const secondFrom = firstMove.stationary ? from : firstMove.to;
     const capturedFirst = !!at(s, firstMove.to);
-    for (const secondMove of pseudo(afterFirst, secondFrom, d, 2)) {
+    const secondMoves = [
+      ...pseudo(afterFirst, secondFrom, d, 2, "normal"),
+      ...(capturedFirst ? pseudo(afterFirst, secondFrom, d, 2, "after-capture") : []),
+    ];
+    for (const secondMove of secondMoves) {
       if (capturedFirst && at(afterFirst, secondMove.to)) continue;
       const afterSecond = raw(afterFirst, secondMove);
       if (s.preset === "classic") {
@@ -497,6 +533,30 @@ export function legal(s: Match, from: Pos, d: Definition[]) {
         if (!k || threatened(afterSecond, k, other(p.color), d)) continue;
       }
       combined.push({ ...firstMove, next: secondMove });
+    }
+  }
+  // 飛翔: 固定跳躍先の駒を中継点として残し、そこから最終地点を計算する。
+  const flightPatterns = activeDefinition.patterns.filter((pattern) => pattern.phase === 2 && pattern.secondTrigger === "flight");
+  const leapPatterns = activeDefinition.patterns.filter((pattern) => (pattern.phase ?? 1) === 1 && pattern.kind === "leap");
+  if (p.evolved && flightPatterns.length && leapPatterns.length) {
+    const sign = p.color === "white" ? 1 : -1;
+    for (const leap of leapPatterns) for (const vector of leap.vectors) {
+      const anchor = { row: from.row + vector.dy * sign, col: from.col + vector.dx };
+      if (!inside(anchor) || !at(s, anchor)) continue;
+      for (const pattern of flightPatterns) for (const vector2 of pattern.vectors) {
+        const max: number = pattern.kind === "direction" && pattern.range === "slide" ? 7 : pattern.kind === "direction" ? pattern.range as number : 1;
+        for (let step = 1; step <= max; step++) {
+          const to = { row: anchor.row + vector2.dy * sign * step, col: anchor.col + vector2.dx * step };
+          if (!inside(to)) break;
+          const target = at(s, to), usage = pattern.usage ?? "both";
+          if (target?.color === p.color || (target && usage === "move") || (!target && usage === "capture")) continue;
+          const first: Move = { from, to: anchor, transit: true };
+          const action = { ...first, next: { from, to } };
+          const after = raw(raw(s, first), action.next);
+          if (s.preset === "classic") { const royal = king(after, p.color); if (!royal || threatened(after, royal, other(p.color), d)) continue; }
+          combined.push(action);
+        }
+      }
     }
   }
   return combined;
@@ -556,6 +616,8 @@ function applyGrowth(match: Match, definitions: Definition[], statsSnapshot: Ret
       ...piece,
       evolved: true,
       moved: definition?.transformation ? false : piece.moved,
+      evolvedMoved: false,
+      globalSwapUsed: false,
     };
     evolved[piece.color]++;
   });
@@ -576,7 +638,7 @@ function applyGrowth(match: Match, definitions: Definition[], statsSnapshot: Ret
 }
 export function play(s: Match, m: Move, d: Definition[]) {
   const p = at(s, m.from)!,
-    captures = [at(s, m.to), m.next ? at(raw(s, m), m.next.to) : null].filter(
+    captures = [m.swap || m.transit ? null : at(s, m.to), m.next ? at(raw(s, m), m.next.to) : null].filter(
       Boolean,
     ) as Piece[],
     enemy = other(p.color),

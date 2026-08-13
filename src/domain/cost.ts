@@ -129,6 +129,8 @@ export function growthCost(d: Definition) {
   const rawPremium = Math.max(0, evolved - base);
   const difficulty = conditionDifficulty(d.growth.condition);
   let premium = Math.ceil(rawPremium * GROWTH_RATE[difficulty]);
+  if (d.growth.localSwap) premium += 3;
+  if (d.growth.globalSwap) premium += 5;
   if (d.growth.unlockCrown || Object.keys(d.growth.unlocks).length)
     premium = Math.max(1, premium);
   if (d.growth.unlockCrown) premium = Math.max(10, premium);
@@ -160,20 +162,25 @@ export function cost(d: Definition) {
     const usage = p.usage ?? "both";
     if (p.kind === "leap") {
       const unit = COST.usageLeap[usage];
-      n += p.vectors.length * (p.initialOnly ? Math.ceil(unit / 2) : unit);
-      if (p.phase === 2) n += COST.secondPhaseBase;
+      let value = p.vectors.length * (p.initialOnly || p.evolvedInitialOnly ? Math.ceil(unit / 2) : unit);
+      if (p.phase === 2 && p.secondTrigger && p.secondTrigger !== "normal" && !p.initialOnly && !p.evolvedInitialOnly) value = Math.ceil(value / 2);
+      n += value;
+      if (p.phase === 2 && (!p.secondTrigger || p.secondTrigger === "normal")) n += COST.secondPhaseBase;
     } else {
       if (p.range === "slide") {
         slide = true;
-        n += p.vectors.reduce((sum, vector) => {
+        const slideCost = p.vectors.reduce((sum, vector) => {
           const unit = slideDirectionCost(vector, usage);
-          return sum + (p.initialOnly ? Math.ceil(unit / 2) : unit);
+          return sum + (p.initialOnly || p.evolvedInitialOnly ? Math.ceil(unit / 2) : unit);
         }, 0);
+        n += p.phase === 2 && p.secondTrigger && p.secondTrigger !== "normal" && !p.initialOnly && !p.evolvedInitialOnly ? Math.ceil(slideCost / 2) : slideCost;
       } else {
         const unit = COST.usageRange[usage][p.range];
-        n += p.vectors.length * (p.initialOnly ? Math.ceil(unit / 2) : unit);
+        let value = p.vectors.length * (p.initialOnly || p.evolvedInitialOnly ? Math.ceil(unit / 2) : unit);
+        if (p.phase === 2 && p.secondTrigger && p.secondTrigger !== "normal" && !p.initialOnly && !p.evolvedInitialOnly) value = Math.ceil(value / 2);
+        n += value;
       }
-      if (p.phase === 2) n += COST.secondPhaseBase;
+      if (p.phase === 2 && (!p.secondTrigger || p.secondTrigger === "normal")) n += COST.secondPhaseBase;
       if (p.cannon) {
         cannon = true;
         n += p.vectors.length * COST.cannonDirection;
@@ -193,7 +200,8 @@ export function cost(d: Definition) {
       }
     }
   }
-  return n + (slide ? COST.slideBase : 0) + (cannon ? COST.cannonBase : 0);
+  const evolution = d.growth ?? d.transformation;
+  return n + (slide ? COST.slideBase : 0) + (cannon ? COST.cannonBase : 0) + (evolution?.localSwap ? 3 : 0) + (evolution?.globalSwap ? 5 : 0);
 }
 function slideDirectionCost(vector: Vec, usage: Usage) {
   const full = usage === "both" || usage === "stationary";
@@ -289,6 +297,12 @@ export function errors(d: Definition, all: Definition[] = []) {
     e.push("通常記号が別の駒の変身後記号と重複しています。");
   if (n.patterns.length < 1 || n.patterns.length > 4)
     e.push("移動セットは1～4個です。");
+  if (n.patterns.some((p) => p.evolvedInitialOnly || p.evolutionOnly || (p.secondTrigger && p.secondTrigger !== "normal")) && !n.growth && !n.transformation)
+    e.push("進化限定の移動設定には成長または変身が必要です。");
+  if (n.patterns.some((p) => p.secondTrigger === "flight" && p.phase !== 2))
+    e.push("飛翔は2回目の移動にだけ設定できます。");
+  if (n.patterns.some((p) => p.secondTrigger === "after-capture" && ((p.usage ?? "both") !== "move" || p.phase !== 2)))
+    e.push("捕獲後移動は2回目の移動専用セットに設定してください。");
   if (
     n.patterns.some(
       (p) =>
@@ -333,7 +347,7 @@ export function errors(d: Definition, all: Definition[] = []) {
   if (!n.patterns.some((p) => p.vectors.length)) e.push("移動先が必要です。");
   if (n.growth) {
     const unlocks = Object.entries(n.growth.unlocks);
-    if (!n.growth.unlockCrown && !unlocks.length)
+    if (!n.growth.unlockCrown && !unlocks.length && !n.growth.localSwap && !n.growth.globalSwap && !n.patterns.some((pattern) => pattern.evolutionOnly))
       e.push("成長後に解放する能力が必要です。");
     for (const [key, unlock] of unlocks) {
       const pattern = n.patterns[Number(key)];
@@ -392,9 +406,10 @@ export function errors(d: Definition, all: Definition[] = []) {
     const transformedPatternErrors = errors(
       { ...transformed, id: `${n.id}:transformed`, symbol: "ZZ" },
       [],
-    ).filter((message) => !message.includes("記号"));
+    ).filter((message) => !message.includes("記号") && !message.includes("進化限定"));
     e.push(...transformedPatternErrors.map((message) => `変身後：${message}`));
-    if (cost(transformed) > transformationLimit(n))
+    const transformedCost = cost(transformed) + (n.transformation.localSwap ? 3 : 0) + (n.transformation.globalSwap ? 5 : 0);
+    if (transformedCost > transformationLimit(n))
       e.push(`変身後コストが上限${transformationLimit(n)}を超えています。`);
   }
   if (growthCost(n).total > 30) e.push("コストが30を超えています。");

@@ -583,6 +583,12 @@ main > section {
 .growth-status p {
   margin: 0.25rem 0;
 }
+
+.board button.local-swap { box-shadow: inset 0 0 0 4px #4cc9b0; }
+.board button.global-swap { box-shadow: inset 0 0 0 4px #a78bfa; }
+.board button.flight-anchor { box-shadow: inset 0 0 0 4px #69b7ff; }
+.legend-local-swap { border-left: 0.55rem solid #4cc9b0; padding-left: 0.35rem; }
+.legend-global-swap { border-left: 0.55rem solid #a78bfa; padding-left: 0.35rem; }
 .pattern-card legend {
   color: #d7bd80;
   padding: 0 0.4rem;

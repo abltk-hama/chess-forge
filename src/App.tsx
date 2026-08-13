@@ -407,6 +407,17 @@ function TransformationPatterns({
               <option value="2">2回目</option>
             </select>
           </label>
+          {pattern.phase === 2 && (
+            <label>
+              2回目の発動方式
+              <select aria-label={`変身後セット${index + 1}の発動方式`} value={pattern.secondTrigger ?? "normal"} onChange={(event) => update(index, { ...pattern, secondTrigger: event.target.value as "normal" | "after-capture" | "flight", usage: event.target.value === "after-capture" ? "move" : pattern.usage })}>
+                <option value="normal">通常</option>
+                <option value="after-capture">捕獲後移動</option>
+                <option value="flight">飛翔</option>
+              </select>
+            </label>
+          )}
+          <label><input aria-label="変身直後一度のみ" type="checkbox" checked={!!pattern.evolvedInitialOnly} onChange={(event) => update(index, { ...pattern, evolvedInitialOnly: event.target.checked })} />進化後初回限定（コスト半額）</label>
           <label>
             <input
               type="checkbox"
@@ -762,6 +773,16 @@ function Editor({
                     <option value="2">2回目（追加コスト）</option>
                   </select>
                 </label>
+                {pattern.phase === 2 && (
+                  <label>
+                    2回目の発動方式
+                    <select aria-label={`移動セット${index + 1}の発動方式`} value={pattern.secondTrigger ?? "normal"} onChange={(event) => updatePattern(index, { ...pattern, secondTrigger: event.target.value as "normal" | "after-capture" | "flight", evolutionOnly: event.target.value !== "normal" ? true : pattern.evolutionOnly, usage: event.target.value === "after-capture" ? "move" : pattern.usage })}>
+                      <option value="normal">通常</option><option value="after-capture">捕獲後移動（進化限定）</option><option value="flight">飛翔（進化限定）</option>
+                    </select>
+                  </label>
+                )}
+                <label><input type="checkbox" checked={!!pattern.evolutionOnly} onChange={(event) => updatePattern(index, { ...pattern, evolutionOnly: event.target.checked })} />成長・変身後限定</label>
+                <label><input aria-label="進化直後一度のみ" type="checkbox" checked={!!pattern.evolvedInitialOnly} onChange={(event) => updatePattern(index, { ...pattern, evolvedInitialOnly: event.target.checked })} />進化後初回限定（コスト半額）</label>
                 <label>
                   <input
                     type="checkbox"
@@ -1087,6 +1108,8 @@ function Editor({
                   />
                   成長後にCrown化
                 </label>
+                <label><input type="checkbox" checked={!!d.growth.localSwap} onChange={(event) => setD({ ...d, growth: { ...d.growth!, localSwap: event.target.checked } })} />成長後に近接交換 (+3)</label>
+                <label><input type="checkbox" checked={!!d.growth.globalSwap} onChange={(event) => setD({ ...d, growth: { ...d.growth!, globalSwap: event.target.checked } })} />成長後に全域交換・1回 (+5)</label>
                 {d.patterns.map((pattern, index) => {
                   const unlock = d.growth?.unlocks[index] ?? {};
                   const moveOnly = (pattern.usage ?? "both") === "move";
@@ -1235,6 +1258,8 @@ function Editor({
                     })
                   }
                 />
+                <label><input type="checkbox" checked={!!d.transformation.localSwap} onChange={(event) => setD({ ...d, transformation: { ...d.transformation!, localSwap: event.target.checked } })} />変身後に近接交換 (+3)</label>
+                <label><input type="checkbox" checked={!!d.transformation.globalSwap} onChange={(event) => setD({ ...d, transformation: { ...d.transformation!, globalSwap: event.target.checked } })} />変身後に全域交換・1回 (+5)</label>
                 <label>
                   変身後名称
                   <input
@@ -1295,7 +1320,7 @@ function Editor({
           {d.transformation && (
             <p>
               変身前 {definitionCost(d)}／30・変身後{" "}
-              {definitionCost(transformedDefinition(d))}/
+              {definitionCost(transformedDefinition(d)) + (d.transformation.localSwap ? 3 : 0) + (d.transformation.globalSwap ? 5 : 0)}/
               {transformationLimit(d)}
             </p>
           )}
@@ -2195,6 +2220,9 @@ function Game({
           .map((m) => `${m.next!.to.row},${m.next!.to.col}`)
       : moves.map((m) => `${m.to.row},${m.to.col}`),
   );
+  const localSwapTargets = new Set(moves.filter((move) => move.swap === "local").map((move) => `${move.to.row},${move.to.col}`));
+  const globalSwapTargets = new Set(moves.filter((move) => move.swap === "global").map((move) => `${move.to.row},${move.to.col}`));
+  const flightAnchors = new Set(moves.filter((move) => move.transit).map((move) => `${move.to.row},${move.to.col}`));
   const inspectedMarks = new Map(
     (inspected ? inspectRange(match, inspected, defs) : []).map((mark) => [
       `${mark.to.row},${mark.to.col}`,
@@ -2271,7 +2299,7 @@ function Game({
           <h2>対局</h2>
           <p>{aiError || (thinking ? "AI思考中…" : match.message)}</p>
           {pending && (
-            <p>2回目の移動先を選ぶか、「ここで手番終了」を選択してください。</p>
+            <p>{pending.some((move) => move.transit) ? "飛翔の着地点を選んでください。中継地点の駒は捕獲しません。" : "2回目の移動先を選ぶか、「ここで手番終了」を選択してください。"}</p>
           )}
         </div>
         <div className="range-controls">
@@ -2329,7 +2357,7 @@ function Game({
               return (
                 <button
                   aria-label={`${p.row},${p.col}`}
-                  className={`${(p.row + p.col) % 2 ? "dark" : "light"} ${isInspectedPiece ? "selected" : ""} ${targets.has(key) ? "move" : ""} ${rangeClass} ${mark?.second ? "range-second" : ""} ${threatenedSquares.has(key) ? "threat" : ""} ${isOutsideInspection ? "inspection-muted" : ""}`}
+                  className={`${(p.row + p.col) % 2 ? "dark" : "light"} ${isInspectedPiece ? "selected" : ""} ${targets.has(key) ? "move" : ""} ${localSwapTargets.has(key) ? "local-swap" : ""} ${globalSwapTargets.has(key) ? "global-swap" : ""} ${flightAnchors.has(key) ? "flight-anchor" : ""} ${rangeClass} ${mark?.second ? "range-second" : ""} ${threatenedSquares.has(key) ? "threat" : ""} ${isOutsideInspection ? "inspection-muted" : ""}`}
                   onClick={() => click(p)}
                   aria-disabled={locked}
                   key={i}
@@ -2364,6 +2392,8 @@ function Game({
             <span className="legend-range-both">移動・捕獲</span>
             <span className="legend-range-stationary">静止捕獲</span>
             <span className="legend-range-second">2回目を含む</span>
+            <span className="legend-local-swap">近接交換</span>
+            <span className="legend-global-swap">全域交換</span>
           </div>
           {inspectedPiece?.role === "custom" &&
             (() => {

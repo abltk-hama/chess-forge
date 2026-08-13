@@ -78,6 +78,7 @@ export function evaluate(match: Match, defs: Definition[]) {
 }
 
 const capturedValue = (match: Match, move: Move, defs: Definition[]) => {
+  if (move.swap) return 0;
   const afterFirst = move.next ? playFirst(match, move) : null;
   const captured = move.next
     ? (afterFirst!.board[idx(move.next.to)] ?? match.board[idx(move.to)])
@@ -86,6 +87,7 @@ const capturedValue = (match: Match, move: Move, defs: Definition[]) => {
 };
 
 function playFirst(match: Match, move: Move) {
+  if (move.transit) return match;
   const board = [...match.board];
   const piece = board[idx(move.from)]!;
   if (move.stationary) board[idx(move.to)] = null;

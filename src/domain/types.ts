@@ -36,12 +36,16 @@ export interface Growth {
   condition: EvolutionCondition;
   unlockCrown?: boolean;
   unlocks: Record<number, GrowthUnlock>;
+  localSwap?: boolean;
+  globalSwap?: boolean;
 }
 export interface Transformation {
   condition: EvolutionCondition;
   name: string;
   symbol: string;
   patterns: Pattern[];
+  localSwap?: boolean;
+  globalSwap?: boolean;
 }
 export type GameMode = "local" | "ai";
 export type AIDifficulty = "easy" | "normal" | "hard";
@@ -60,6 +64,9 @@ export interface Direction {
   range: Range;
   usage?: Usage;
   initialOnly?: boolean;
+  evolvedInitialOnly?: boolean;
+  evolutionOnly?: boolean;
+  secondTrigger?: "normal" | "after-capture" | "flight";
   phase?: 1 | 2;
   cannon?: boolean;
   /** Runtime-only marker is omitted from saved definitions. */
@@ -74,6 +81,9 @@ export interface Leap {
   vectors: Vec[];
   usage?: Usage;
   initialOnly?: boolean;
+  evolvedInitialOnly?: boolean;
+  evolutionOnly?: boolean;
+  secondTrigger?: "normal" | "after-capture" | "flight";
   phase?: 1 | 2;
 }
 export type Pattern = Direction | Leap;
@@ -93,6 +103,8 @@ export interface Piece {
   definitionId?: string;
   moved: boolean;
   evolved?: boolean;
+  evolvedMoved?: boolean;
+  globalSwapUsed?: boolean;
   captures?: number;
   reachedEnemyDepth?: number;
 }
@@ -104,6 +116,8 @@ export interface Move {
   castle?: "king" | "queen";
   enPassant?: boolean;
   promotion?: boolean;
+  transit?: boolean;
+  swap?: "local" | "global";
 }
 export interface Setup {
   rook: string | null;
