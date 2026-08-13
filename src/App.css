@@ -147,6 +147,45 @@ main > section {
   border-radius: 8px;
   padding: 1rem;
 }
+.position-editor {
+  display: grid;
+  grid-template-columns: minmax(360px, 1.5fr) minmax(240px, 1fr);
+  gap: 1rem;
+  align-items: start;
+  margin: 1rem 0;
+}
+.editor-board {
+  width: 100%;
+}
+.editor-board button span {
+  position: relative;
+}
+.editor-board button small {
+  position: absolute;
+  top: -0.55em;
+  right: -0.65em;
+  color: #67d5e8;
+  font-size: 0.45em;
+  text-shadow: 0 1px 2px #000;
+}
+.position-tools .inline-check {
+  display: flex;
+  grid-template-columns: none;
+  align-items: center;
+  gap: 0.5rem;
+}
+.position-tool-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.65rem;
+}
+.position-tool-actions button {
+  flex: 1;
+  padding-inline: 0.55rem;
+}
+.position-tool-actions button.active {
+  background: #8d6e35;
+}
 .form input,
 .form select,
 .setup select {
@@ -223,6 +262,9 @@ main > section {
 .danger,
 .error {
   color: #ff8b7d;
+}
+.warning {
+  color: #e3ca91;
 }
 .available {
   color: #8bd49c;
@@ -617,6 +659,12 @@ main > section {
   }
   .formation-editor {
     grid-template-columns: 1fr;
+  }
+  .position-editor {
+    grid-template-columns: 1fr;
+  }
+  .editor-board {
+    min-width: 0;
   }
 }
 

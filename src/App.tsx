@@ -16,6 +16,15 @@ import {
   play,
 } from "./domain/game";
 import {
+  boardDraftErrors,
+  boardDraftFromSetup,
+  boardDraftWarnings,
+  createMatchFromDraft,
+  emptyBoardDraft,
+  type BoardDraft,
+  type DraftPiece,
+} from "./domain/boardEditor";
+import {
   crownCount as countCrowns,
   formationErrors,
   formationFromSetup,
@@ -30,12 +39,14 @@ import {
   other,
   type Definition,
   type AIDifficulty,
+  type Color,
   type GameMode,
   type FormationMode,
   type Match,
   type Pos,
   type Preset,
   type Range,
+  type Role,
   type SaveData,
   type Setup,
   type SuspendedMatchData,
@@ -60,6 +71,7 @@ import {
   type AutoImportHandle,
 } from "./infrastructure/autoImport";
 type Page = "home" | "editor" | "setup" | "game";
+type PlacementMode = "formation" | "editor";
 const blank = (): Definition => ({
   id: crypto.randomUUID(),
   name: "",
@@ -645,6 +657,149 @@ function Preview({ d }: { d: Definition }) {
     </div>
   );
 }
+const editorRoles: { role: Exclude<Role, "custom">; label: string }[] = [
+  { role: "king", label: "KI King" },
+  { role: "queen", label: "QU Queen" },
+  { role: "rook", label: "RO Rook" },
+  { role: "bishop", label: "BI Bishop" },
+  { role: "knight", label: "KN Knight" },
+  { role: "pawn", label: "PO Pawn" },
+];
+function PositionEditor({
+  defs,
+  draft,
+  setDraft,
+  resetFromSetup,
+}: {
+  defs: Definition[];
+  draft: BoardDraft;
+  setDraft: (draft: BoardDraft) => void;
+  resetFromSetup: () => BoardDraft;
+}) {
+  const [tool, setTool] = useState("standard:pawn"),
+    [color, setColor] = useState<Color>("white"),
+    [moved, setMoved] = useState(false),
+    [erasing, setErasing] = useState(false),
+    [previous, setPrevious] = useState<BoardDraft | null>(null);
+  const replaceDraft = (next: BoardDraft) => {
+    setPrevious(draft);
+    setDraft(next);
+  };
+  const selectedPiece = (): DraftPiece => {
+    const [kind, value] = tool.split(":");
+    return kind === "custom"
+      ? { color, role: "custom", definitionId: value, moved }
+      : { color, role: value as Exclude<Role, "custom">, moved };
+  };
+  return (
+    <div className="position-editor">
+      <div className="board editor-board" aria-label="局面編集盤">
+        {draft.map((piece, index) => (
+          <button
+            type="button"
+            aria-label={`局面 ${Math.floor(index / 8)},${index % 8}`}
+            className={(Math.floor(index / 8) + index) % 2 ? "dark" : "light"}
+            onClick={() => {
+              const next = [...draft];
+              next[index] = erasing ? null : selectedPiece();
+              replaceDraft(next);
+            }}
+            key={index}
+          >
+            {piece && (
+              <span className={piece.color}>
+                {pieceText({ ...piece, id: `draft-${index}` }, defs)}
+                {piece.moved && <small aria-label="移動済み">●</small>}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+      <div className="formation-control position-tools">
+        <label>
+          配置する駒
+          <select
+            aria-label="局面に配置する駒"
+            disabled={erasing}
+            value={tool}
+            onChange={(event) => setTool(event.target.value)}
+          >
+            <optgroup label="標準駒">
+              {editorRoles.map(({ role, label }) => (
+                <option value={`standard:${role}`} key={role}>
+                  {label}
+                </option>
+              ))}
+            </optgroup>
+            {!!defs.length && (
+              <optgroup label="オリジナル駒">
+                {defs.map((definition) => (
+                  <option value={`custom:${definition.id}`} key={definition.id}>
+                    {definition.symbol} {definition.name}
+                    {definition.isCrown ? " Crown" : ""}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+          </select>
+        </label>
+        <label>
+          陣営
+          <select
+            aria-label="配置する駒の陣営"
+            disabled={erasing}
+            value={color}
+            onChange={(event) => setColor(event.target.value as Color)}
+          >
+            <option value="white">白</option>
+            <option value="black">黒</option>
+          </select>
+        </label>
+        <label className="inline-check">
+          <input
+            type="checkbox"
+            disabled={erasing}
+            checked={moved}
+            onChange={(event) => setMoved(event.target.checked)}
+          />
+          移動済みとして配置
+        </label>
+        <div className="position-tool-actions">
+          <button
+            type="button"
+            className={erasing ? "active" : ""}
+            aria-pressed={erasing}
+            onClick={() => setErasing(!erasing)}
+          >
+            消しゴム
+          </button>
+          <button
+            type="button"
+            disabled={!previous}
+            onClick={() => {
+              if (!previous) return;
+              const current = draft;
+              setDraft(previous);
+              setPrevious(current);
+            }}
+          >
+            元に戻す
+          </button>
+        </div>
+        <div className="position-tool-actions">
+          <button type="button" onClick={() => replaceDraft(resetFromSetup())}>
+            現在の編成から作成
+          </button>
+          <button type="button" onClick={() => replaceDraft(emptyBoardDraft())}>
+            空盤面
+          </button>
+        </div>
+        <p>盤面をタップすると、選択中の設定で配置・上書きします。</p>
+        <p>●は移動済みです。初回限定能力やキャスリングへ影響します。</p>
+      </div>
+    </div>
+  );
+}
 function SetupView({
   defs,
   setup,
@@ -666,13 +821,40 @@ function SetupView({
   setMode: (mode: GameMode) => void;
   difficulty: AIDifficulty;
   setDifficulty: (difficulty: AIDifficulty) => void;
-  start: () => void;
+  start: (match?: Match) => void;
 }) {
-  const [selectedSlot, setSelectedSlot] = useState(0);
+  const [selectedSlot, setSelectedSlot] = useState(0),
+    [placementMode, setPlacementMode] = useState<PlacementMode>("formation"),
+    [draft, setDraft] = useState<BoardDraft>(() =>
+      boardDraftFromSetup(defs, setup, preset),
+    ),
+    [draftTurn, setDraftTurn] = useState<Color>("white");
   const formation = formationFromSetup(setup);
   const layoutMode = formationMode(setup);
   const crowns = countCrowns(formation, defs);
-  const issues = formationErrors(formation, layoutMode, defs);
+  const draftIssues = boardDraftErrors(draft, defs, preset);
+  const issues =
+    placementMode === "formation"
+      ? formationErrors(formation, layoutMode, defs)
+      : draftIssues;
+  const warnings =
+    placementMode === "editor"
+      ? boardDraftWarnings(draft, defs, preset, draftTurn)
+      : [];
+  const editorCrownCounts = (["white", "black"] as Color[]).map(
+    (color) =>
+      draft.filter(
+        (piece) =>
+          piece?.color === color &&
+          piece.role === "custom" &&
+          defs.find((definition) => definition.id === piece.definitionId)
+            ?.isCrown,
+      ).length,
+  );
+  const tooManyCrownsForAll =
+    placementMode === "formation"
+      ? crowns >= 2
+      : editorCrownCounts.some((count) => count >= 2);
   const files = "abcdefgh";
   const standardSymbols = ["RO", "KN", "BI", "QU", "KI", "BI", "KN", "RO"];
   const selectedId = formation[selectedSlot];
@@ -688,28 +870,44 @@ function SetupView({
     return !formationErrors(next, layoutMode, defs).length;
   };
   useEffect(() => {
-    if (crowns >= 2 && preset === "royal-all") setPreset("royal-any");
-  }, [crowns, preset, setPreset]);
+    if (tooManyCrownsForAll && preset === "royal-all")
+      setPreset("royal-any");
+  }, [tooManyCrownsForAll, preset, setPreset]);
   return (
     <section>
       <h2>対局設定</h2>
       <div className="panel setup">
         <label>
-          配置モード
+          配置方法
           <select
-            value={layoutMode}
+            aria-label="配置方法"
+            value={placementMode}
             onChange={(event) =>
-              setSetup({
-                ...setup,
-                mode: event.target.value as FormationMode,
-                formation,
-              })
+              setPlacementMode(event.target.value as PlacementMode)
             }
           >
-            <option value="balanced">バランス配置</option>
-            <option value="free">自由配置</option>
+            <option value="formation">通常編成</option>
+            <option value="editor">盤面編集</option>
           </select>
         </label>
+        {placementMode === "formation" && (
+          <label>
+            配置モード
+            <select
+              value={layoutMode}
+              onChange={(event) =>
+                setSetup({
+                  ...setup,
+                  mode: event.target.value as FormationMode,
+                  formation,
+                })
+              }
+            >
+              <option value="balanced">バランス配置</option>
+              <option value="free">自由配置</option>
+            </select>
+          </label>
+        )}
         <label>
           ルール
           <select
@@ -718,14 +916,14 @@ function SetupView({
           >
             <option value="classic">クラシック拡張</option>
             <option value="royal-any">ロイヤルハント ANY</option>
-            <option value="royal-all" disabled={crowns >= 2}>
+            <option value="royal-all" disabled={tooManyCrownsForAll}>
               ロイヤルハント ALL
             </option>
           </select>
         </label>
-        {crowns >= 2 && (
+        {tooManyCrownsForAll && (
           <p className="notice-inline">
-            Crownが2体以上のためRoyal Hunt ALLは選択できません。
+            いずれかの陣営にCrownが2体以上いるためRoyal Hunt ALLは選択できません。
           </p>
         )}
         <label>
@@ -752,79 +950,122 @@ function SetupView({
             <option value="hard">HARD</option>
           </select>
         </label>
-        <div className="formation-editor">
-          <div className="formation-grid" aria-label="白の編成">
-            {formation.map((definitionId, index) => {
-              const definition = defs.find((item) => item.id === definitionId);
-              const symbol =
-                definition?.symbol ??
-                (index < 8 ? standardSymbols[index] : "PO");
-              const square = `${files[index % 8]}${index < 8 ? 1 : 2}`;
-              return (
-                <button
-                  type="button"
-                  className={selectedSlot === index ? "selected-slot" : ""}
-                  disabled={index === KING_SLOT}
-                  aria-label={`編成 ${square}`}
-                  onClick={() => setSelectedSlot(index)}
-                  key={index}
-                >
-                  <span>{symbol}</span>
-                  <small>{square}</small>
-                </button>
-              );
-            })}
-          </div>
-          <div className="formation-control">
-            <h3>
-              {files[selectedSlot % 8]}
-              {selectedSlot < 8 ? 1 : 2} の駒
-            </h3>
-            <label>
-              配置する駒
-              <select
-                aria-label="配置する駒"
-                disabled={selectedSlot === KING_SLOT}
-                value={selectedId ?? ""}
-                onChange={(event) => {
-                  const next = [...formation];
-                  next[selectedSlot] = event.target.value || null;
-                  changeFormation(next);
-                }}
-              >
-                <option value="">標準駒</option>
-                {defs.map((definition) => (
-                  <option
-                    value={definition.id}
-                    disabled={!canPlace(definition)}
-                    key={definition.id}
+        {placementMode === "editor" && (
+          <label>
+            手番
+            <select
+              aria-label="編集局面の手番"
+              value={draftTurn}
+              onChange={(event) => setDraftTurn(event.target.value as Color)}
+            >
+              <option value="white">白</option>
+              <option value="black">黒</option>
+            </select>
+          </label>
+        )}
+        {placementMode === "formation" ? (
+          <div className="formation-editor">
+            <div className="formation-grid" aria-label="白の編成">
+              {formation.map((definitionId, index) => {
+                const definition = defs.find(
+                  (item) => item.id === definitionId,
+                );
+                const symbol =
+                  definition?.symbol ??
+                  (index < 8 ? standardSymbols[index] : "PO");
+                const square = `${files[index % 8]}${index < 8 ? 1 : 2}`;
+                return (
+                  <button
+                    type="button"
+                    className={selectedSlot === index ? "selected-slot" : ""}
+                    disabled={index === KING_SLOT}
+                    aria-label={`編成 ${square}`}
+                    onClick={() => setSelectedSlot(index)}
+                    key={index}
                   >
-                    {definition.symbol} {definition.name} ({cost(definition)})
-                    {definition.isCrown ? " Crown" : ""}
-                    {usesLegacyJump(definition) ? " 旧コスト" : ""}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <p>
-              {layoutMode === "free"
-                ? "King以外・コスト30まで配置可能"
-                : `この枠の上限：${slotLimit(selectedSlot)}`}
-            </p>
-            {selectedDefinition && (
+                    <span>{symbol}</span>
+                    <small>{square}</small>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="formation-control">
+              <h3>
+                {files[selectedSlot % 8]}
+                {selectedSlot < 8 ? 1 : 2} の駒
+              </h3>
+              <label>
+                配置する駒
+                <select
+                  aria-label="配置する駒"
+                  disabled={selectedSlot === KING_SLOT}
+                  value={selectedId ?? ""}
+                  onChange={(event) => {
+                    const next = [...formation];
+                    next[selectedSlot] = event.target.value || null;
+                    changeFormation(next);
+                  }}
+                >
+                  <option value="">標準駒</option>
+                  {defs.map((definition) => (
+                    <option
+                      value={definition.id}
+                      disabled={!canPlace(definition)}
+                      key={definition.id}
+                    >
+                      {definition.symbol} {definition.name} ({cost(definition)})
+                      {definition.isCrown ? " Crown" : ""}
+                      {usesLegacyJump(definition) ? " 旧コスト" : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <p>
-                選択中：{selectedDefinition.symbol} {selectedDefinition.name}
+                {layoutMode === "free"
+                  ? "King以外・コスト30まで配置可能"
+                  : `この枠の上限：${slotLimit(selectedSlot)}`}
               </p>
-            )}
-            <p>Crown：{crowns}体／陣営</p>
+              {selectedDefinition && (
+                <p>
+                  選択中：{selectedDefinition.symbol} {selectedDefinition.name}
+                </p>
+              )}
+              <p>Crown：{crowns}体／陣営</p>
+            </div>
           </div>
-        </div>
+        ) : (
+          <>
+            <PositionEditor
+              defs={defs}
+              draft={draft}
+              setDraft={setDraft}
+              resetFromSetup={() => boardDraftFromSetup(defs, setup, preset)}
+            />
+            <p>
+              Crown：白 {editorCrownCounts[0]}体／黒 {editorCrownCounts[1]}体
+            </p>
+          </>
+        )}
         {issues.map((issue) => (
           <p className="error" key={issue}>
             {issue}
           </p>
         ))}
-        <button disabled={!!issues.length} onClick={start}>
+        {warnings.map((warning) => (
+          <p className="warning" key={warning}>
+            警告：{warning}
+          </p>
+        ))}
+        <button
+          disabled={!!issues.length}
+          onClick={() =>
+            start(
+              placementMode === "editor"
+                ? createMatchFromDraft(draft, defs, preset, draftTurn)
+                : undefined,
+            )
+          }
+        >
           対局開始
         </button>
       </div>
@@ -1532,9 +1773,9 @@ export default function App() {
           setMode={setMode}
           difficulty={difficulty}
           setDifficulty={setDifficulty}
-          start={() => {
+          start={(editedMatch) => {
             const snapshot = structuredClone(defs);
-            const nextMatch = createMatch(snapshot, setup, preset);
+            const nextMatch = editedMatch ?? createMatch(snapshot, setup, preset);
             setMatchDefs(snapshot);
             setMatch(nextMatch);
             const saved: SuspendedMatchData = {

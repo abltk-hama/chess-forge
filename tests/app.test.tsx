@@ -220,4 +220,31 @@ describe("App", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "対局開始" })).toBeEnabled();
   });
+
+  it("starts a match from an edited empty board", () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "対局設定" }));
+    fireEvent.change(screen.getByLabelText("配置方法"), {
+      target: { value: "editor" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "空盤面" }));
+    expect(screen.getByText("白Kingを1体配置してください。")).toBeVisible();
+
+    fireEvent.change(screen.getByLabelText("局面に配置する駒"), {
+      target: { value: "standard:king" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "局面 7,4" }));
+    fireEvent.change(screen.getByLabelText("配置する駒の陣営"), {
+      target: { value: "black" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "局面 0,4" }));
+    fireEvent.change(screen.getByLabelText("編集局面の手番"), {
+      target: { value: "black" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "対局開始" }));
+
+    expect(screen.getByText("黒の手番です。")).toBeVisible();
+    expect(screen.getByRole("button", { name: "7,4" })).toHaveTextContent("KI");
+    expect(screen.getByRole("button", { name: "0,4" })).toHaveTextContent("ki");
+  });
 });
