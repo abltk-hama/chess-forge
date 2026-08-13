@@ -100,6 +100,41 @@ describe("App", () => {
     expect(screen.getByText(/初回の2マス移動/)).toBeInTheDocument();
   });
 
+  it("saves and resumes the current match", () => {
+    const first = render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "対局設定" }));
+    fireEvent.click(screen.getByRole("button", { name: "対局開始" }));
+    fireEvent.click(screen.getByRole("button", { name: "6,4" }));
+    fireEvent.click(screen.getByRole("button", { name: "4,4" }));
+    first.unmount();
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "対局を再開" }));
+    expect(screen.getByText("黒の手番です。")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "4,4" })).toHaveTextContent("PO");
+  });
+
+  it("deletes a suspended match from home", () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "対局設定" }));
+    fireEvent.click(screen.getByRole("button", { name: "対局開始" }));
+    fireEvent.click(screen.getByRole("button", { name: "ホーム" }));
+    fireEvent.click(screen.getByRole("button", { name: "中断データを削除" }));
+    expect(
+      screen.queryByRole("button", { name: "対局を再開" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers deletion when suspended data is broken", () => {
+    localStorage.setItem("custom-piece-chess:match:v1", "{}");
+    render(<App />);
+    expect(screen.getByText(/中断データを読み込めません/)).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "壊れた中断データを削除" }),
+    );
+    expect(localStorage.getItem("custom-piece-chess:match:v1")).toBeNull();
+  });
+
   it("inspects enemy range and toggles side-wide threats", () => {
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "対局設定" }));
@@ -117,6 +152,30 @@ describe("App", () => {
     expect(screen.getByRole("button", { name: "0,1" })).not.toHaveClass(
       "selected",
     );
+
+    fireEvent.click(screen.getByRole("button", { name: "0,1" }));
+    expect(screen.getByRole("button", { name: "選択解除" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "2,0" })).toHaveClass(
+      "range-both",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "選択解除" }));
+    expect(screen.getByRole("button", { name: "2,0" })).toHaveClass("threat");
+  });
+
+  it("clears inspection by tapping the piece again or pressing Escape", () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "対局設定" }));
+    fireEvent.click(screen.getByRole("button", { name: "対局開始" }));
+    const knight = screen.getByRole("button", { name: "0,1" });
+
+    fireEvent.click(knight);
+    expect(knight).toHaveClass("selected");
+    fireEvent.click(knight);
+    expect(knight).not.toHaveClass("selected");
+
+    fireEvent.click(knight);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(knight).not.toHaveClass("selected");
   });
 
   it("switches between balanced and free formation modes", () => {

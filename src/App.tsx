@@ -38,10 +38,19 @@ import {
   type Range,
   type SaveData,
   type Setup,
+  type SuspendedMatchData,
   type Usage,
   type Vec,
 } from "./domain/types";
-import { download, load, parse, save } from "./infrastructure/storage";
+import {
+  clearMatch,
+  download,
+  load,
+  loadMatch,
+  parse,
+  save,
+  saveMatch,
+} from "./infrastructure/storage";
 import {
   chooseAutoImportFile,
   clearAutoImportHandle,
@@ -1049,6 +1058,15 @@ function Game({
       worker.terminate();
     };
   }, [match, defs, mode, difficulty, setMatch]);
+  useEffect(() => {
+    const keydown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || pending) return;
+      setSelected(null);
+      setInspected(null);
+    };
+    window.addEventListener("keydown", keydown);
+    return () => window.removeEventListener("keydown", keydown);
+  }, [pending]);
   const locked = thinking || (mode === "ai" && match.turn === "black");
   const moves = selected ? legal(match, selected, defs) : [];
   const targets = new Set(
@@ -1083,6 +1101,11 @@ function Game({
   }
   const click = (p: Pos) => {
     const piece = match.board[idx(p)];
+    if (!pending && inspected?.row === p.row && inspected.col === p.col) {
+      setSelected(null);
+      setInspected(null);
+      return;
+    }
     if (locked) {
       setInspected(piece ? p : null);
       return;
@@ -1145,6 +1168,17 @@ function Game({
               <option value="opponent">相手側</option>
             </select>
           </label>
+          {inspected && !pending && (
+            <button
+              className="clear-inspection"
+              onClick={() => {
+                setSelected(null);
+                setInspected(null);
+              }}
+            >
+              選択解除
+            </button>
+          )}
           <button onClick={onExit}>終了</button>
         </div>
       </div>
@@ -1257,6 +1291,13 @@ export default function App() {
       return null;
     }
   }, []);
+  const suspendedInitial = useMemo(() => {
+    try {
+      return { data: loadMatch(), error: false };
+    } catch {
+      return { data: null, error: true };
+    }
+  }, []);
   const [defs, setDefs] = useState<Definition[]>(initial?.definitions ?? []),
     [setup, setSetup] = useState<Setup>(initial?.setup ?? emptySetup()),
     [preset, setPreset] = useState<Preset>(initial?.preset ?? "classic"),
@@ -1264,11 +1305,33 @@ export default function App() {
     [difficulty, setDifficulty] = useState<AIDifficulty>("normal"),
     [page, setPage] = useState<Page>("home"),
     [match, setMatch] = useState<Match | null>(null),
-    [notice, setNotice] = useState(""),
+    [matchDefs, setMatchDefs] = useState<Definition[]>([]),
+    [suspended, setSuspended] = useState<SuspendedMatchData | null>(
+      suspendedInitial.data,
+    ),
+    [brokenSuspended, setBrokenSuspended] = useState(suspendedInitial.error),
+    [notice, setNotice] = useState(
+      suspendedInitial.error
+        ? "中断データを読み込めません。削除して新しい対局を開始できます。"
+        : "",
+    ),
     [autoHandle, setAutoHandle] = useState<AutoImportHandle | null>(null),
     [autoPrompted, setAutoPrompted] = useState(false),
     [showAutoPrompt, setShowAutoPrompt] = useState(false);
   const data: SaveData = { version: 1, definitions: defs, setup, preset };
+  useEffect(() => {
+    if (!match || page !== "game") return;
+    const saved: SuspendedMatchData = {
+      version: 1,
+      match,
+      definitions: matchDefs,
+      mode,
+      difficulty,
+      savedAt: new Date().toISOString(),
+    };
+    saveMatch(saved);
+    setSuspended(saved);
+  }, [difficulty, match, matchDefs, mode, page]);
   const importFile = async (f: File) => {
     try {
       const d = parse(await f.text());
@@ -1351,8 +1414,35 @@ export default function App() {
           <h2>30ポイントで、あなただけの駒を。</h2>
           <p>能力を組み合わせ、対称な軍でチェスを拡張します。</p>
           <div className="row">
+            {suspended && (
+              <button
+                onClick={() => {
+                  setMatch(suspended.match);
+                  setMatchDefs(suspended.definitions);
+                  setMode(suspended.mode);
+                  setDifficulty(suspended.difficulty);
+                  setPage("game");
+                }}
+              >
+                対局を再開
+              </button>
+            )}
             <button onClick={() => setPage("editor")}>駒を作る</button>
-            <button onClick={() => setPage("setup")}>対局する</button>
+            <button onClick={() => setPage("setup")}>新しい対局</button>
+            {(suspended || brokenSuspended) && (
+              <button
+                onClick={() => {
+                  clearMatch();
+                  setSuspended(null);
+                  setBrokenSuspended(false);
+                  setNotice("中断データを削除しました。");
+                }}
+              >
+                {brokenSuspended
+                  ? "壊れた中断データを削除"
+                  : "中断データを削除"}
+              </button>
+            )}
             <button
               onClick={() => {
                 save(data);
@@ -1419,7 +1509,20 @@ export default function App() {
           difficulty={difficulty}
           setDifficulty={setDifficulty}
           start={() => {
-            setMatch(createMatch(defs, setup, preset));
+            const snapshot = structuredClone(defs);
+            const nextMatch = createMatch(snapshot, setup, preset);
+            setMatchDefs(snapshot);
+            setMatch(nextMatch);
+            const saved: SuspendedMatchData = {
+              version: 1,
+              match: nextMatch,
+              definitions: snapshot,
+              mode,
+              difficulty,
+              savedAt: new Date().toISOString(),
+            };
+            saveMatch(saved);
+            setSuspended(saved);
             setPage("game");
           }}
         />
@@ -1428,7 +1531,7 @@ export default function App() {
         <Game
           match={match}
           setMatch={setMatch}
-          defs={defs}
+          defs={matchDefs}
           mode={mode}
           difficulty={difficulty}
           onExit={() => setPage("setup")}

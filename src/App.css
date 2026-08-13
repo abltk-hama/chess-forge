@@ -337,6 +337,9 @@ main > section {
   gap: 0.4rem;
   align-items: center;
 }
+.clear-inspection {
+  border-color: #d7bd80;
+}
 .range-legend {
   margin-bottom: 1rem;
   font-size: 0.8rem;

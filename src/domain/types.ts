@@ -1,6 +1,12 @@
 export type Color = "white" | "black";
 export type Role =
-  "king" | "queen" | "rook" | "bishop" | "knight" | "pawn" | "custom";
+  | "king"
+  | "queen"
+  | "rook"
+  | "bishop"
+  | "knight"
+  | "pawn"
+  | "custom";
 export type Preset = "classic" | "royal-any" | "royal-all";
 export type Range = 1 | 2 | 3 | "slide";
 export type Usage = "both" | "move" | "capture" | "stationary";
@@ -84,6 +90,14 @@ export interface SaveData {
   definitions: Definition[];
   setup: Setup;
   preset: Preset;
+}
+export interface SuspendedMatchData {
+  version: 1;
+  match: Match;
+  definitions: Definition[];
+  mode: GameMode;
+  difficulty: AIDifficulty;
+  savedAt: string;
 }
 export const directions: Vec[] = [
   { dx: 0, dy: -1 },

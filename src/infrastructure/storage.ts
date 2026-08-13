@@ -4,9 +4,10 @@ import {
   formationFromSetup,
   formationMode,
 } from "../domain/formation";
-import type { SaveData } from "../domain/types";
+import type { SaveData, SuspendedMatchData } from "../domain/types";
 
 const KEY = "custom-piece-chess:v1";
+const MATCH_KEY = "custom-piece-chess:match:v1";
 
 export const save = (data: SaveData) =>
   localStorage.setItem(KEY, JSON.stringify(data));
@@ -79,6 +80,42 @@ export const load = () => {
   const value = localStorage.getItem(KEY);
   return value ? parse(value) : null;
 };
+
+export const saveMatch = (data: SuspendedMatchData) =>
+  localStorage.setItem(MATCH_KEY, JSON.stringify(data));
+
+export function loadMatch(): SuspendedMatchData | null {
+  const raw = localStorage.getItem(MATCH_KEY);
+  if (!raw) return null;
+  const value: unknown = JSON.parse(raw);
+  if (
+    !value ||
+    typeof value !== "object" ||
+    !("version" in value) ||
+    value.version !== 1 ||
+    !("match" in value) ||
+    !("definitions" in value) ||
+    !Array.isArray(value.definitions) ||
+    !("mode" in value) ||
+    (value.mode !== "local" && value.mode !== "ai") ||
+    !("difficulty" in value) ||
+    !["easy", "normal", "hard"].includes(String(value.difficulty)) ||
+    !("savedAt" in value) ||
+    typeof value.savedAt !== "string"
+  )
+    throw new Error("対応していない対局保存形式です。");
+  const data = value as SuspendedMatchData;
+  if (
+    !data.match ||
+    !Array.isArray(data.match.board) ||
+    data.match.board.length !== 64 ||
+    !Array.isArray(data.match.history)
+  )
+    throw new Error("対局保存データが壊れています。");
+  return data;
+}
+
+export const clearMatch = () => localStorage.removeItem(MATCH_KEY);
 
 export function download(data: SaveData) {
   const url = URL.createObjectURL(
