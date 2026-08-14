@@ -35,6 +35,16 @@ const key = (v: Vec) => `${v.dx},${v.dy}`;
 export const unique = (v: Vec[]) => [
   ...new Map(v.filter((x) => x.dx || x.dy).map((x) => [key(x), x])).values(),
 ];
+export function migrateDefinition(d: Definition): Definition {
+  return {
+    ...d,
+    patterns: d.patterns.map((pattern) =>
+      pattern.phase === 2 && (pattern.secondTrigger ?? "normal") === "normal"
+        ? { ...pattern, usage: "move" as const }
+        : pattern,
+    ),
+  };
+}
 export function normalize(d: Definition): Definition {
   return {
     ...d,
@@ -141,7 +151,10 @@ export function evolvedDefinition(d: Definition, requestedStage?: number): Defin
             ) as 0 | 1 | 2,
           };
       return unlock.stationary
-        ? [evolvedPattern, { ...evolvedPattern, usage: "stationary" }]
+        ? [
+            { ...evolvedPattern, growthStationaryBase: true },
+            { ...evolvedPattern, usage: "stationary" },
+          ]
         : [evolvedPattern];
     }),
   };
@@ -214,6 +227,7 @@ export function cost(d: Definition) {
     cannon = false,
     slide = false;
   for (const p of normalize(d).patterns) {
+    if (p.growthStationaryBase) continue;
     const usage = p.usage ?? "both";
     if (p.kind === "leap") {
       const unit = COST.usageLeap[usage];
@@ -225,12 +239,18 @@ export function cost(d: Definition) {
       if (p.range === "slide") {
         slide = true;
         const slideCost = p.vectors.reduce((sum, vector) => {
-          const unit = slideDirectionCost(vector, usage);
+          const rawUnit = slideDirectionCost(vector, usage);
+          const unit = p.phase === 2 && (p.secondTrigger ?? "normal") === "normal" && usage === "move"
+            ? Math.max(1, rawUnit - 1)
+            : rawUnit;
           return sum + (p.initialOnly || p.evolvedInitialOnly ? Math.ceil(unit / 2) : unit);
         }, 0);
         n += p.phase === 2 && p.secondTrigger && p.secondTrigger !== "normal" && !p.initialOnly && !p.evolvedInitialOnly ? Math.ceil(slideCost / 2) : slideCost;
       } else {
-        const unit = COST.usageRange[usage][p.range];
+        const rawUnit = COST.usageRange[usage][p.range];
+        const unit = p.phase === 2 && (p.secondTrigger ?? "normal") === "normal" && usage === "move"
+          ? Math.max(1, rawUnit - 1)
+          : rawUnit;
         let value = p.vectors.length * (p.initialOnly || p.evolvedInitialOnly ? Math.ceil(unit / 2) : unit);
         if (p.phase === 2 && p.secondTrigger && p.secondTrigger !== "normal" && !p.initialOnly && !p.evolvedInitialOnly) value = Math.ceil(value / 2);
         n += value;
@@ -333,7 +353,7 @@ export const jumpLimit = (
     : value === 1 || value === 2
       ? value
       : 0;
-export function errors(d: Definition, all: Definition[] = []) {
+export function errors(d: Definition, all: Definition[] = [], evolvedContext = false) {
   const n = normalize(d),
     e: string[] = [];
   if (!n.name || n.name.length > 20) e.push("名前は1～20文字です。");
@@ -358,6 +378,8 @@ export function errors(d: Definition, all: Definition[] = []) {
     e.push("飛翔は2回目の移動にだけ設定できます。");
   if (n.patterns.some((p) => p.secondTrigger === "after-capture" && ((p.usage ?? "both") !== "move" || p.phase !== 2)))
     e.push("捕獲後移動は2回目の移動専用セットに設定してください。");
+  if (!evolvedContext && n.patterns.some((p) => p.phase === 2 && (p.secondTrigger ?? "normal") === "normal" && (p.usage ?? "both") !== "move"))
+    e.push("通常の2回目移動は移動専用にしてください。捕獲は成長または変身後に設定できます。");
   if (
     n.patterns.some(
       (p) =>
@@ -448,7 +470,7 @@ export function errors(d: Definition, all: Definition[] = []) {
         e.push("成長後の固定跳躍点は7×7範囲内に設定してください。");
       if ((unlock.cannon || unlock.jumpAllies || unlock.jumpEnemies) && pattern.kind !== "direction")
         e.push("キャノン・飛び越し解放は方向移動専用です。");
-      if (pattern.kind === "direction" && pattern.range === 1 && (unlock.cannon || unlock.jumpAllies || unlock.jumpEnemies))
+      if (pattern.kind === "direction" && (unlock.range ?? pattern.range) === 1 && (unlock.cannon || unlock.jumpAllies || unlock.jumpEnemies))
         e.push("1マス移動へキャノン・飛び越しは設定できません。");
       if (unlock.cannon && (unlock.jumpAllies || unlock.jumpEnemies))
         e.push("同じセットでキャノンと飛び越しは解放できません。");
@@ -503,6 +525,7 @@ export function errors(d: Definition, all: Definition[] = []) {
     const transformedPatternErrors = errors(
       { ...transformed, id: `${n.id}:transformed`, symbol: "ZZ" },
       [],
+      true,
     ).filter((message) => !message.includes("記号") && !message.includes("進化限定"));
     e.push(...transformedPatternErrors.map((message) => `変身後：${message}`));
     const transformedCost = cost(transformed) + (n.transformation.localSwap ? 3 : 0) + (n.transformation.globalSwap ? 5 : 0);

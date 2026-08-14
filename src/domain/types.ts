@@ -91,6 +91,8 @@ export interface Direction {
   cannon?: boolean;
   /** Runtime-only marker is omitted from saved definitions. */
   growthCannon?: boolean;
+  /** Runtime-only: paired movement whose price is represented by stationary capture. */
+  growthStationaryBase?: boolean;
   jumpAllies?: 0 | 1 | 2 | boolean;
   jumpEnemies?: 0 | 1 | 2 | boolean;
   /** Version 1 compatibility. New definitions use jumpAllies/jumpEnemies. */
@@ -105,6 +107,8 @@ export interface Leap {
   evolutionOnly?: boolean;
   secondTrigger?: "normal" | "after-capture" | "flight";
   phase?: 1 | 2;
+  /** Runtime-only: paired movement whose price is represented by stationary capture. */
+  growthStationaryBase?: boolean;
 }
 export type Pattern = Direction | Leap;
 export interface Definition {

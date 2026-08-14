@@ -18,6 +18,52 @@ const base = (patterns: Definition["patterns"], abilities = {}): Definition => (
 });
 
 describe("evolution-only movement abilities", () => {
+  it("keeps a normal second move non-capturing and stops after a first capture", () => {
+    const definition: Definition = {
+      id: "hero", name: "Hero", symbol: "HE", isCrown: false,
+      patterns: [
+        { kind: "leap", vectors: [{ dx: 1, dy: 0 }] },
+        { kind: "leap", vectors: [{ dx: 1, dy: 0 }], usage: "both", phase: 2 },
+      ],
+    };
+    const state = match();
+    state.board[idx({ row: 4, col: 1 })] = piece({ evolved: false });
+    state.board[idx({ row: 4, col: 3 })] = { id: "second-target", color: "black", role: "pawn", moved: true };
+    expect(legal(state, { row: 4, col: 1 }, [definition]).some((move) => move.next?.to.col === 3)).toBe(false);
+    state.board[idx({ row: 4, col: 2 })] = { id: "first-target", color: "black", role: "pawn", moved: true };
+    expect(legal(state, { row: 4, col: 1 }, [definition]).filter((move) => move.to.col === 2).every((move) => !move.next)).toBe(true);
+  });
+
+  it("unlocks capture on a normal second move after growth", () => {
+    const definition = base([
+      { kind: "leap", vectors: [{ dx: 1, dy: 0 }] },
+      { kind: "leap", vectors: [{ dx: 1, dy: 0 }], usage: "move", phase: 2 },
+    ], { unlocks: { 1: { capture: true } } });
+    const state = match();
+    state.board[idx({ row: 4, col: 1 })] = piece();
+    state.board[idx({ row: 4, col: 3 })] = { id: "target", color: "black", role: "pawn", moved: true };
+    expect(legal(state, { row: 4, col: 1 }, [definition]).some((move) => move.next?.to.col === 3)).toBe(true);
+  });
+
+  it("allows a transformed piece to use capture-only second movement", () => {
+    const definition: Definition = {
+      id: "hero", name: "Hero", symbol: "HE", isCrown: false,
+      patterns: [{ kind: "leap", vectors: [{ dx: 0, dy: 1 }] }],
+      transformation: {
+        condition: { kind: "captures", subject: "self", threshold: 1 },
+        name: "Changed", symbol: "CH",
+        patterns: [
+          { kind: "leap", vectors: [{ dx: 1, dy: 0 }] },
+          { kind: "leap", vectors: [{ dx: 1, dy: 0 }], usage: "capture", phase: 2 },
+        ],
+      },
+    };
+    const state = match();
+    state.board[idx({ row: 4, col: 1 })] = piece();
+    state.board[idx({ row: 4, col: 3 })] = { id: "target", color: "black", role: "pawn", moved: true };
+    expect(legal(state, { row: 4, col: 1 }, [definition]).some((move) => move.next?.to.col === 3)).toBe(true);
+  });
+
   it("offers discounted second movement only after a capture", () => {
     const definition = base([
       { kind: "leap", vectors: [{ dx: 1, dy: 0 }] },

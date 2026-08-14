@@ -161,6 +161,24 @@ describe("cost", () => {
           ],
         }),
       ),
+    ).toBe(6);
+  });
+
+  it("discounts each normal second-move direction by one but keeps the base fee", () => {
+    expect(
+      cost(
+        make({
+          patterns: [
+            {
+              kind: "direction",
+              vectors: [{ dx: 0, dy: -1 }, { dx: 1, dy: 0 }],
+              range: 2,
+              usage: "move",
+              phase: 2,
+            },
+          ],
+        }),
+      ),
     ).toBe(7);
   });
 

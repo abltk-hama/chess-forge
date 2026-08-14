@@ -422,6 +422,7 @@ it("combines two movement phases and limits the turn to one capture", () => {
   const actions = legal(match, { row: 4, col: 2 }, [definition]);
   expect(actions.some((action) => !action.next)).toBe(true);
   expect(actions.some((action) => action.next)).toBe(false);
+  match.board[idx({ row: 4, col: 3 })] = null;
   match.board[idx({ row: 5, col: 3 })] = null;
   const combined = legal(match, { row: 4, col: 2 }, [definition]).find(
     (action) => action.next,
@@ -446,10 +447,14 @@ it("treats a second-phase capture as a threat", () => {
       {
         kind: "leap",
         vectors: [{ dx: 0, dy: 1 }],
-        usage: "capture",
+        usage: "move",
         phase: 2,
       },
     ],
+    growth: {
+      condition: { kind: "captures", subject: "self", threshold: 1 },
+      unlocks: { 1: { capture: true } },
+    },
   };
   const match = createMatch([], emptySetup(), "classic");
   match.board = Array(64).fill(null);
@@ -459,6 +464,7 @@ it("treats a second-phase capture as a threat", () => {
     role: "custom",
     definitionId: "fork",
     moved: false,
+    evolved: true,
   };
   match.board[idx({ row: 5, col: 3 })] = {
     id: "k",

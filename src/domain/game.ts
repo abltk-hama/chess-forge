@@ -238,10 +238,15 @@ export function pseudo(
   if (p.role !== "custom") return standard(s, from, p);
   const source = defs.find((x) => x.id === p.definitionId);
   if (!source) return [];
+  const growthStage = p.growthStage ?? (p.evolved ? 1 : 0);
+  const evolvedMovement = !!(
+    (source.growth && growthStage > 0) ||
+    (source.transformation && p.evolved)
+  );
   const d = p.summoned
     ? summonedDefinition(source)
-    : source.growth && (p.growthStage ?? (p.evolved ? 1 : 0)) > 0
-      ? evolvedDefinition(source, p.growthStage ?? 1)
+    : source.growth && growthStage > 0
+      ? evolvedDefinition(source, growthStage)
       : p.evolved && source.transformation
         ? transformedDefinition(source)
         : source;
@@ -260,7 +265,9 @@ export function pseudo(
         : pattern.range === "slide"
           ? 7
           : pattern.range;
-    const usage = pattern.usage ?? "both";
+    const usage = phase === 2 && trigger === "normal" && !evolvedMovement
+      ? "move"
+      : pattern.usage ?? "both";
     const additiveCannon = pattern.kind === "direction" && !!pattern.growthCannon;
     if (pattern.kind === "direction" && pattern.cannon) {
       out.push(
@@ -388,10 +395,11 @@ export function inspectRange(s: Match, from: Pos, d: Definition[]) {
   for (const firstMove of first) {
     const afterFirst = raw(s, firstMove);
     const secondFrom = firstMove.stationary ? from : firstMove.to;
-    pseudo(afterFirst, secondFrom, d, 2).forEach((move) => {
+    const capturedFirst = !!at(s, firstMove.to);
+    pseudo(afterFirst, secondFrom, d, 2, capturedFirst ? "after-capture" : "normal").forEach((move) => {
       if (!at(afterFirst, move.to)) add(move.to, { move: true, second: true });
     });
-    if (!at(s, firstMove.to)) {
+    if (!capturedFirst) {
       captureSquares(afterFirst, secondFrom, d, 2).forEach(
         ({ to, stationary }) =>
           add(to, { capture: true, stationary, second: true }),
@@ -496,10 +504,9 @@ export function legal(s: Match, from: Pos, d: Definition[]): Move[] {
     const afterFirst = raw(s, firstMove);
     const secondFrom = firstMove.stationary ? from : firstMove.to;
     const capturedFirst = !!at(s, firstMove.to);
-    const secondMoves = [
-      ...pseudo(afterFirst, secondFrom, d, 2, "normal"),
-      ...(capturedFirst ? pseudo(afterFirst, secondFrom, d, 2, "after-capture") : []),
-    ];
+    const secondMoves = capturedFirst
+      ? pseudo(afterFirst, secondFrom, d, 2, "after-capture")
+      : pseudo(afterFirst, secondFrom, d, 2, "normal");
     for (const secondMove of secondMoves) {
       if (capturedFirst && at(afterFirst, secondMove.to)) continue;
       const afterSecond = raw(afterFirst, secondMove);

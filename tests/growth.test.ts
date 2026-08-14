@@ -109,6 +109,24 @@ describe("growth", () => {
     expect(growthCost(definition).stages[0].gap).toBe(0);
   });
 
+  it("allows jumping when the same growth stage extends a one-square move", () => {
+    const definition: Definition = {
+      ...growing({}),
+      patterns: [{ kind: "direction", vectors: [{ dx: 0, dy: -1 }], range: 1, usage: "move" }],
+      growth: {
+        condition: { kind: "captures", subject: "self", threshold: 1 },
+        unlocks: { 0: { range: 2, jumpAllies: 1 } },
+      },
+    };
+    expect(errors(definition)).toEqual([]);
+    const state = matchWith(definition);
+    state.board[idx({ row: 4, col: 3 })] = piece({ evolved: true, growthStage: 1 });
+    state.board[idx({ row: 3, col: 3 })] = { id: "ally", color: "white", role: "pawn", moved: true };
+    expect(pseudo(state, { row: 4, col: 3 }, [definition])).toEqual(
+      expect.arrayContaining([expect.objectContaining({ to: { row: 2, col: 3 } })]),
+    );
+  });
+
   it("discounts the difference between base and unlocked abilities", () => {
     const definition = growing({ 0: { capture: true } });
     const pricing = growthCost(definition);

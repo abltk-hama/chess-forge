@@ -16,6 +16,17 @@ describe("storage", () => {
     ).toBe(1));
   it("rejects unknown versions", () =>
     expect(() => parse('{"version":2,"definitions":[]}')).toThrow());
+  it("migrates legacy normal second captures to move-only", () => {
+    const data = parse(JSON.stringify({
+      version: 1,
+      definitions: [{
+        id: "legacy", name: "Legacy", symbol: "LG", isCrown: false,
+        patterns: [{ kind: "direction", vectors: [{ dx: 1, dy: 0 }], range: 2, usage: "both", phase: 2 }],
+      }],
+      setup: {}, preset: "classic",
+    }));
+    expect(data.definitions[0].patterns[0].usage).toBe("move");
+  });
 });
 
 it("accepts sixteen definitions and rejects seventeen", () => {

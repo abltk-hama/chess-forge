@@ -1,4 +1,4 @@
-import { definitionCost, errors, MAX_DEFINITIONS } from "../domain/cost";
+import { definitionCost, errors, MAX_DEFINITIONS, migrateDefinition } from "../domain/cost";
 import {
   formationErrors,
   formationFromSetup,
@@ -28,6 +28,7 @@ export function parse(raw: string): SaveData {
     throw new Error("対応していない駒セット形式です。");
   }
   const data = value as SaveData;
+  data.definitions = data.definitions.map(migrateDefinition);
   if (
     data.definitions.length > MAX_DEFINITIONS ||
     data.definitions.some(
@@ -106,6 +107,7 @@ export function loadMatch(): SuspendedMatchData | null {
   )
     throw new Error("対応していない対局保存形式です。");
   const data = value as SuspendedMatchData;
+  data.definitions = data.definitions.map(migrateDefinition);
   if (
     !data.match ||
     !Array.isArray(data.match.board) ||
@@ -137,7 +139,12 @@ export const loadSimulationResults = (): SimulationResult[] => {
   const raw = localStorage.getItem(SIMULATION_KEY);
   if (!raw) return [];
   const value: unknown = JSON.parse(raw);
-  return Array.isArray(value) ? (value as SimulationResult[]).slice(0, 3) : [];
+  return Array.isArray(value)
+    ? (value as SimulationResult[]).slice(0, 3).map((result) => ({
+        ...result,
+        definitions: result.definitions.map(migrateDefinition),
+      }))
+    : [];
 };
 export const saveSimulationResult = (result: SimulationResult) => {
   const results = [result, ...loadSimulationResults().filter((item) => item.id !== result.id)].slice(0, 3);

@@ -799,6 +799,7 @@ function Editor({
                   <select
                     aria-label={`移動セット${index + 1}の用途`}
                     value={pattern.usage ?? "both"}
+                    disabled={pattern.phase === 2 && (pattern.secondTrigger ?? "normal") !== "flight"}
                     onChange={(event) =>
                       updatePattern(index, {
                         ...pattern,
@@ -825,6 +826,7 @@ function Editor({
                       updatePattern(index, {
                         ...pattern,
                         phase: Number(event.target.value) as 1 | 2,
+                        usage: event.target.value === "2" ? "move" : pattern.usage,
                         ...(pattern.kind === "direction" &&
                         event.target.value === "2"
                           ? { cannon: false }
@@ -839,10 +841,13 @@ function Editor({
                 {pattern.phase === 2 && (
                   <label>
                     2回目の発動方式
-                    <select aria-label={`移動セット${index + 1}の発動方式`} value={pattern.secondTrigger ?? "normal"} onChange={(event) => updatePattern(index, { ...pattern, secondTrigger: event.target.value as "normal" | "after-capture" | "flight", evolutionOnly: event.target.value !== "normal" ? true : pattern.evolutionOnly, usage: event.target.value === "after-capture" ? "move" : pattern.usage })}>
+                    <select aria-label={`移動セット${index + 1}の発動方式`} value={pattern.secondTrigger ?? "normal"} onChange={(event) => updatePattern(index, { ...pattern, secondTrigger: event.target.value as "normal" | "after-capture" | "flight", evolutionOnly: event.target.value !== "normal" ? true : pattern.evolutionOnly, usage: event.target.value === "flight" ? pattern.usage : "move" })}>
                       <option value="normal">通常</option><option value="after-capture">捕獲後移動（進化限定）</option><option value="flight">飛翔（進化限定）</option>
                     </select>
                   </label>
+                )}
+                {pattern.phase === 2 && (pattern.secondTrigger ?? "normal") === "normal" && (
+                  <p>通常の2回目は移動専用です。捕獲は成長後の解放で追加できます。</p>
                 )}
                 <label><input type="checkbox" checked={!!pattern.evolutionOnly} onChange={(event) => updatePattern(index, { ...pattern, evolutionOnly: event.target.checked })} />成長・変身後限定</label>
                 <label><input aria-label="進化直後一度のみ" type="checkbox" checked={!!pattern.evolvedInitialOnly} onChange={(event) => updatePattern(index, { ...pattern, evolvedInitialOnly: event.target.checked })} />進化後初回限定（コスト半額）</label>
@@ -1199,8 +1204,11 @@ function Editor({
                 {d.patterns.map((pattern, index) => {
                   const unlock = activeGrowthStage.unlocks[index] ?? {};
                   const moveOnly = (pattern.usage ?? "both") === "move";
+                  const effectiveRange = pattern.kind === "direction"
+                    ? unlock.range ?? pattern.range
+                    : 1;
                   const ranged =
-                    pattern.kind === "direction" && pattern.range !== 1;
+                    pattern.kind === "direction" && effectiveRange !== 1;
                   return (
                     <fieldset className="growth-unlock" key={index}>
                       <legend>移動セット {index + 1} の解放</legend>
@@ -1236,9 +1244,13 @@ function Editor({
                           <select
                             aria-label={`移動セット${index + 1}の成長後距離`}
                             value={unlock.range ?? pattern.range}
-                            onChange={(event) => updateUnlock(index, {
-                              range: (event.target.value === "slide" ? "slide" : Number(event.target.value)) as Range,
-                            })}
+                            onChange={(event) => {
+                              const range = (event.target.value === "slide" ? "slide" : Number(event.target.value)) as Range;
+                              updateUnlock(index, {
+                                range,
+                                ...(range === 1 ? { jumpAllies: 0, jumpEnemies: 0, cannon: false } : {}),
+                              });
+                            }}
                           >
                             {[1, 2, 3].filter((value) => typeof pattern.range === "number" && value >= pattern.range).map((value) => <option value={value} key={value}>{value}</option>)}
                             <option value="slide">スライド</option>
