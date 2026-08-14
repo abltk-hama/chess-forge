@@ -35,12 +35,13 @@ export function runSimulation(defs: Definition[], setup: Setup, preset: Match["p
       if (!move) { match = { ...match, draw: true, message: "合法手がありません。" }; break; }
       const mover = match.board[move.from.row * 8 + move.from.col]!;
       const before = new Map(match.board.flatMap((piece) => piece ? [[piece.id, piece] as const] : []));
-      const wasEvolved = !!mover.evolved;
+      const wasStage = mover.growthStage ?? (mover.evolved ? 1 : 0);
       match = play(match, move, defs); plies++;
       const afterIds = new Set(match.board.flatMap((piece) => piece ? [piece.id] : []));
       before.forEach((piece, id) => { if (!afterIds.has(id)) { ensure(stats, piece, defs).losses++; if (piece.color !== movingColor) ensure(stats, mover, defs).captures++; } });
       const movedNow = match.board.find((piece) => piece?.id === mover.id);
-      if (!wasEvolved && movedNow?.evolved) ensure(stats, mover, defs).evolutions++;
+      const nowStage = movedNow?.growthStage ?? (movedNow?.evolved ? 1 : 0);
+      if (nowStage > wasStage) ensure(stats, mover, defs).evolutions += nowStage - wasStage;
       const enemy = movingColor === "white" ? "black" : "white";
       if (royalPositions(match, enemy, defs).some((pos) => threatened(match, pos, movingColor, defs))) ensure(stats, movedNow ?? mover, defs).checks++;
       if (match.winner === movingColor && match.message.includes("メイト")) ensure(stats, movedNow ?? mover, defs).mates++;

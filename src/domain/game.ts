@@ -13,7 +13,7 @@ import type {
 } from "./types";
 import { directions, idx, inside, other } from "./types";
 import { formationFromSetup } from "./formation";
-import { jumpLimit, summonedDefinition, transformedDefinition } from "./cost";
+import { evolvedDefinition, growthStages, jumpLimit, summonedDefinition, transformedDefinition } from "./cost";
 import type { EvolutionCondition } from "./types";
 const back: Role[] = [
   "rook",
@@ -238,9 +238,15 @@ export function pseudo(
   if (p.role !== "custom") return standard(s, from, p);
   const source = defs.find((x) => x.id === p.definitionId);
   if (!source) return [];
-  const d = p.summoned ? summonedDefinition(source) : p.evolved && source.transformation ? transformedDefinition(source) : source;
+  const d = p.summoned
+    ? summonedDefinition(source)
+    : source.growth && (p.growthStage ?? (p.evolved ? 1 : 0)) > 0
+      ? evolvedDefinition(source, p.growthStage ?? 1)
+      : p.evolved && source.transformation
+        ? transformedDefinition(source)
+        : source;
   const out: Move[] = [];
-  for (const [patternIndex, pattern] of d.patterns.entries()) {
+  for (const pattern of d.patterns) {
     if ((pattern.phase ?? 1) !== phase) continue;
     if (phase === 2 && (pattern.secondTrigger ?? "normal") !== trigger) continue;
     if (pattern.evolutionOnly && !p.evolved) continue;
@@ -254,13 +260,8 @@ export function pseudo(
         : pattern.range === "slide"
           ? 7
           : pattern.range;
-    const unlock = p.evolved ? source.growth?.unlocks[patternIndex] : undefined;
-    const usage =
-      unlock?.capture && (pattern.usage ?? "both") === "move"
-        ? "both"
-        : (pattern.usage ?? "both");
-    const additiveCannon = pattern.kind === "direction" && !!unlock?.cannon;
-    const additiveStationary = !!unlock?.stationary;
+    const usage = pattern.usage ?? "both";
+    const additiveCannon = pattern.kind === "direction" && !!pattern.growthCannon;
     if (pattern.kind === "direction" && pattern.cannon) {
       out.push(
         ...cannonRays(s, from, p.color, v, max, usage),
@@ -276,44 +277,15 @@ export function pseudo(
         max,
         pattern.kind === "leap"
           ? 2
-          : Math.max(
-              jumpLimit(pattern.jumpAllies, pattern.canJump),
-              unlock?.jumpAllies ?? 0,
-            ),
+          : jumpLimit(pattern.jumpAllies, pattern.canJump),
         pattern.kind === "leap"
           ? 2
-          : Math.max(
-              jumpLimit(pattern.jumpEnemies, pattern.canJump),
-              unlock?.jumpEnemies ?? 0,
-            ),
+          : jumpLimit(pattern.jumpEnemies, pattern.canJump),
         usage,
       ),
     );
     if (additiveCannon)
       out.push(...cannonRays(s, from, p.color, v, max, "capture"));
-    if (additiveStationary)
-      out.push(
-        ...rays(
-          s,
-          from,
-          p.color,
-          v,
-          max,
-          pattern.kind === "leap"
-            ? 2
-            : Math.max(
-                jumpLimit(pattern.jumpAllies, pattern.canJump),
-                unlock?.jumpAllies ?? 0,
-              ),
-          pattern.kind === "leap"
-            ? 2
-            : Math.max(
-                jumpLimit(pattern.jumpEnemies, pattern.canJump),
-                unlock?.jumpEnemies ?? 0,
-              ),
-          "stationary",
-        ),
-      );
   }
   return [
     ...new Map(
@@ -329,10 +301,10 @@ export const isRoyal = (piece: Piece, definitions: Definition[]) => {
   if (piece.role === "king") return true;
   if (piece.role !== "custom") return false;
   const definition = definitions.find((item) => item.id === piece.definitionId);
-  return !!(
-    definition?.isCrown ||
-    (piece.evolved && definition?.growth?.unlockCrown)
-  );
+  if (definition?.isCrown) return true;
+  if (!definition?.growth) return false;
+  const stage = piece.growthStage ?? (piece.evolved ? 1 : 0);
+  return !!growthStages(definition.growth)[stage - 1]?.unlockCrown;
 };
 export const threatened = (s: Match, target: Pos, by: Color, d: Definition[]): boolean =>
   s.board.some((piece, i) => {
@@ -489,10 +461,15 @@ export function legal(s: Match, from: Pos, d: Definition[]): Move[] {
   if (p.role !== "custom") return base;
   const definition = d.find((item) => item.id === p.definitionId);
   if (!definition) return base;
-  const activeDefinition = p.evolved && definition.transformation ? transformedDefinition(definition) : definition;
+  const growthStage = p.growthStage ?? (p.evolved ? 1 : 0);
+  const activeDefinition = definition.growth && growthStage
+    ? evolvedDefinition(definition, growthStage)
+    : p.evolved && definition.transformation ? transformedDefinition(definition) : definition;
   const combined: Move[] = [...base];
   if (p.evolved) {
-    const evolution = definition.growth ?? definition.transformation;
+    const evolution = definition.growth
+      ? growthStages(definition.growth)[growthStage - 1]
+      : definition.transformation;
     const swapMoves: Move[] = [];
     if (evolution?.localSwap) {
       for (let i = 0; i < 64; i++) {
@@ -604,12 +581,28 @@ function applyGrowth(match: Match, definitions: Definition[], statsSnapshot: Ret
   const board = [...match.board],
     evolved = { white: 0, black: 0 };
   board.forEach((piece, index) => {
-    if (!piece || piece.role !== "custom" || piece.evolved || piece.summoned) return;
+    if (!piece || piece.role !== "custom" || piece.summoned) return;
     const definition = definitions.find((item) => item.id === piece.definitionId);
-    const evolution = definition?.growth ?? definition?.transformation ?? definition?.summoning;
-    if (!evolution) return;
     const position = { row: Math.floor(index / 8), col: index % 8 };
-    if (!conditionMet(evolution.condition, piece, position, match, statsSnapshot)) return;
+    if (definition?.growth) {
+      const stages = growthStages(definition.growth);
+      let stage = piece.growthStage ?? (piece.evolved ? 1 : 0);
+      const before = stage;
+      while (stage < stages.length && conditionMet(stages[stage].condition, piece, position, match, statsSnapshot)) stage++;
+      if (stage === before) return;
+      board[index] = {
+        ...piece,
+        evolved: true,
+        growthStage: stage as 1 | 2,
+        evolvedMoved: false,
+        globalSwapUsed: false,
+      };
+      evolved[piece.color] += stage - before;
+      return;
+    }
+    if (piece.evolved) return;
+    const evolution = definition?.transformation ?? definition?.summoning;
+    if (!evolution || !conditionMet(evolution.condition, piece, position, match, statsSnapshot)) return;
     board[index] = {
       ...piece,
       evolved: true,
@@ -626,9 +619,13 @@ function applyGrowth(match: Match, definitions: Definition[], statsSnapshot: Ret
     stats[color].evolutions += evolved[color];
     const newCrowns = board.filter((piece, index) => {
       const before = match.board[index];
-      if (!piece || !before || piece.color !== color || before.evolved || !piece.evolved) return false;
+      if (!piece || !before || piece.color !== color) return false;
       const definition = definitions.find((item) => item.id === piece.definitionId);
-      return !!definition?.growth?.unlockCrown;
+      if (!definition?.growth) return false;
+      const beforeStage = before.growthStage ?? (before.evolved ? 1 : 0);
+      const afterStage = piece.growthStage ?? (piece.evolved ? 1 : 0);
+      const stages = growthStages(definition.growth);
+      return !stages[beforeStage - 1]?.unlockCrown && !!stages[afterStage - 1]?.unlockCrown;
     }).length;
     targets[color] += newCrowns;
   }

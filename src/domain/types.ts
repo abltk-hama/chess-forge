@@ -26,11 +26,21 @@ export type EvolutionCondition =
       threshold: number;
     };
 export interface GrowthUnlock {
+  range?: Range;
   capture?: boolean;
   stationary?: boolean;
   cannon?: boolean;
   jumpAllies?: 0 | 1 | 2;
   jumpEnemies?: 0 | 1 | 2;
+  /** Fixed-leap destinations after this stage. Same-size relocation is free. */
+  vectors?: Vec[];
+}
+export interface GrowthStage {
+  condition: EvolutionCondition;
+  unlockCrown?: boolean;
+  unlocks: Record<number, GrowthUnlock>;
+  localSwap?: boolean;
+  globalSwap?: boolean;
 }
 export interface Growth {
   condition: EvolutionCondition;
@@ -38,6 +48,8 @@ export interface Growth {
   unlocks: Record<number, GrowthUnlock>;
   localSwap?: boolean;
   globalSwap?: boolean;
+  /** Cumulative snapshots. The editor currently supports at most two stages. */
+  stages?: GrowthStage[];
 }
 export interface Transformation {
   condition: EvolutionCondition;
@@ -112,6 +124,7 @@ export interface Piece {
   definitionId?: string;
   moved: boolean;
   evolved?: boolean;
+  growthStage?: 0 | 1 | 2;
   evolvedMoved?: boolean;
   globalSwapUsed?: boolean;
   captures?: number;

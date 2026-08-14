@@ -35,7 +35,7 @@ function pieceValue(piece: Piece, defs: Definition[]) {
   const valuedDefinition = piece.evolved
     ? definition.transformation
       ? transformedDefinition(definition)
-      : evolvedDefinition(definition)
+      : evolvedDefinition(definition, piece.growthStage ?? 1)
     : definition;
   const movementCost = piece.evolved
     ? cost({ ...valuedDefinition, isCrown: false })

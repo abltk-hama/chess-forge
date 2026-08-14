@@ -1,6 +1,8 @@
 import type {
   Definition,
   EvolutionCondition,
+  Growth,
+  GrowthStage,
   Pattern,
   Range,
   Usage,
@@ -40,7 +42,20 @@ export function normalize(d: Definition): Definition {
     symbol: d.symbol.trim().toUpperCase().slice(0, 2),
     patterns: d.patterns.map((p) => ({ ...p, vectors: unique(p.vectors) })),
     growth: d.growth
-      ? { ...d.growth, unlocks: { ...d.growth.unlocks } }
+      ? {
+          ...d.growth,
+          unlocks: { ...d.growth.unlocks },
+          stages: d.growth.stages?.slice(0, 2).map((stage) => ({
+            ...stage,
+            condition: { ...stage.condition },
+            unlocks: Object.fromEntries(
+              Object.entries(stage.unlocks).map(([index, unlock]) => [
+                index,
+                { ...unlock, vectors: unlock.vectors ? unique(unlock.vectors) : undefined },
+              ]),
+            ),
+          })),
+        }
       : undefined,
     transformation: d.transformation
       ? {
@@ -81,26 +96,41 @@ export const SUMMON_LIMITS = {
 export function summonLimit(d: Definition) {
   return d.summoning ? SUMMON_LIMITS[d.summoning.timing][conditionDifficulty(d.summoning.condition)] : 0;
 }
-export function evolvedDefinition(d: Definition): Definition {
+export function growthStages(growth: Growth): GrowthStage[] {
+  return growth.stages?.length
+    ? growth.stages.slice(0, 2)
+    : [{
+        condition: growth.condition,
+        unlockCrown: growth.unlockCrown,
+        unlocks: growth.unlocks,
+        localSwap: growth.localSwap,
+        globalSwap: growth.globalSwap,
+      }];
+}
+export function evolvedDefinition(d: Definition, requestedStage?: number): Definition {
   if (!d.growth) return d;
+  const stages = growthStages(d.growth);
+  const stage = stages[Math.max(0, Math.min(stages.length, requestedStage ?? stages.length) - 1)];
+  if (!stage) return { ...d, growth: undefined };
   return {
     ...d,
-    isCrown: d.isCrown || !!d.growth.unlockCrown,
+    isCrown: d.isCrown || !!stage.unlockCrown,
     growth: undefined,
     patterns: d.patterns.flatMap((pattern, index): Pattern[] => {
-      const unlock = d.growth?.unlocks[index];
+      const unlock = stage.unlocks[index];
       if (!unlock) return [pattern];
       const usage = unlock.capture
         ? "both"
         : pattern.usage;
       const evolvedPattern: Pattern =
         pattern.kind === "leap"
-          ? { ...pattern, usage }
+          ? { ...pattern, usage, vectors: unlock.vectors ?? pattern.vectors }
           : {
             ...pattern,
+            range: unlock.range ?? pattern.range,
             usage,
-            growthCannon: undefined,
-            cannon: pattern.cannon || unlock.cannon,
+            growthCannon: !!unlock.cannon,
+            cannon: pattern.cannon,
             jumpAllies: Math.max(
               jumpLimit(pattern.jumpAllies, pattern.canJump),
               unlock.jumpAllies ?? 0,
@@ -136,20 +166,30 @@ export function conditionDifficulty(condition: EvolutionCondition) {
   const base = density >= 1 ? 3 : density >= 0.6 ? 2 : 1;
   return Math.min(4, base + (condition.center === "king" ? 1 : 0));
 }
-const GROWTH_RATE = [0, 0.85, 0.65, 0.5, 0.35];
 export function growthCost(d: Definition) {
   const base = cost({ ...d, growth: undefined });
-  if (!d.growth) return { base, premium: 0, total: base, difficulty: 0 };
-  const evolved = cost(evolvedDefinition(d));
-  const rawPremium = Math.max(0, evolved - base);
-  const difficulty = conditionDifficulty(d.growth.condition);
-  let premium = Math.ceil(rawPremium * GROWTH_RATE[difficulty]);
-  if (d.growth.localSwap) premium += 3;
-  if (d.growth.globalSwap) premium += 5;
-  if (d.growth.unlockCrown || Object.keys(d.growth.unlocks).length)
-    premium = Math.max(1, premium);
-  if (d.growth.unlockCrown) premium = Math.max(10, premium);
-  return { base, premium, total: base + premium, difficulty };
+  if (!d.growth) return { base, premium: 0, total: base, difficulty: 0, stages: [] };
+  let previous = base;
+  const stages = growthStages(d.growth).map((stage, index) => {
+    const evolved = cost(evolvedDefinition(d, index + 1)) +
+      (stage.localSwap ? 3 : 0) + (stage.globalSwap ? 5 : 0);
+    const gap = Math.max(0, evolved - previous);
+    const difficulty = conditionDifficulty(stage.condition);
+    const discount = Math.floor(gap * Math.min(0.8, difficulty * 0.2));
+    let charge = Math.max(gap ? 1 : 0, gap - discount);
+    if (stage.unlockCrown && !growthStages(d.growth!)[index - 1]?.unlockCrown)
+      charge = Math.max(10, charge);
+    previous = Math.max(previous, evolved);
+    return { level: index + 1, evaluated: evolved, gap, difficulty, discount, charge };
+  });
+  const premium = stages.reduce((sum, stage) => sum + stage.charge, 0);
+  return {
+    base,
+    premium,
+    total: base + premium,
+    difficulty: stages.at(-1)?.difficulty ?? 0,
+    stages,
+  };
 }
 export const definitionCost = (definition: Definition) =>
   definition.growth
@@ -196,7 +236,7 @@ export function cost(d: Definition) {
         n += value;
       }
       if (p.phase === 2 && (!p.secondTrigger || p.secondTrigger === "normal")) n += COST.secondPhaseBase;
-      if (p.cannon) {
+      if (p.cannon || p.growthCannon) {
         cannon = true;
         n += p.vectors.length * COST.cannonDirection;
       }
@@ -361,19 +401,51 @@ export function errors(d: Definition, all: Definition[] = []) {
     e.push("キャノンと静止捕獲は併用できません。");
   if (!n.patterns.some((p) => p.vectors.length)) e.push("移動先が必要です。");
   if (n.growth) {
-    const unlocks = Object.entries(n.growth.unlocks);
-    if (!n.growth.unlockCrown && !unlocks.length && !n.growth.localSwap && !n.growth.globalSwap && !n.patterns.some((pattern) => pattern.evolutionOnly))
+    const stages = growthStages(n.growth);
+    if (stages.length < 1 || stages.length > 2) e.push("成長段階は1～2段階です。");
+    const signature = (condition: EvolutionCondition) =>
+      condition.kind === "captures" ? `${condition.kind}:${condition.subject}` :
+      condition.kind === "territory" ? `${condition.kind}:${condition.subject}` :
+      condition.kind === "evolutions" ? `${condition.kind}:${condition.side}` :
+      condition.kind === "nearbyEnemies" ? `${condition.kind}:${condition.center}:${condition.radius}` : condition.kind;
+    const strictness = (condition: EvolutionCondition) => condition.kind === "territory" ? 4 - condition.depth : condition.threshold;
+    if (stages.some((stage) => signature(stage.condition) !== signature(stages[0].condition)))
+      e.push("全成長段階で条件の種類・対象・範囲を共通にしてください。");
+    if (stages.some((stage, index) => index > 0 && strictness(stage.condition) <= strictness(stages[index - 1].condition)))
+      e.push("後の成長段階には、前段階より厳しい条件値が必要です。");
+    if (stages.length === 2) {
+      const [first, second] = stages;
+      if ((first.unlockCrown && !second.unlockCrown) || (first.localSwap && !second.localSwap) || (first.globalSwap && !second.globalSwap))
+        e.push("段階2の能力は段階1から累積させてください。");
+      for (const [key, unlock] of Object.entries(first.unlocks)) {
+        const next = second.unlocks[Number(key)] ?? {};
+        const rank = (range: Range | undefined) => range === "slide" ? 4 : range ?? 0;
+        if ((unlock.capture && !next.capture) || (unlock.stationary && !next.stationary) || (unlock.cannon && !next.cannon) || rank(unlock.range) > rank(next.range) || (unlock.jumpAllies ?? 0) > (next.jumpAllies ?? 0) || (unlock.jumpEnemies ?? 0) > (next.jumpEnemies ?? 0))
+          e.push("段階2の移動能力は段階1から累積させてください。");
+      }
+    }
+    if (!stages.some((stage) => stage.unlockCrown || Object.keys(stage.unlocks).length || stage.localSwap || stage.globalSwap) && !n.patterns.some((pattern) => pattern.evolutionOnly))
       e.push("成長後に解放する能力が必要です。");
-    for (const [key, unlock] of unlocks) {
+    for (const [stageIndex, stage] of stages.entries()) for (const [key, unlock] of Object.entries(stage.unlocks)) {
       const pattern = n.patterns[Number(key)];
       if (!pattern) {
-        e.push("存在しない移動セットへ成長能力が設定されています。");
+        e.push(`段階${stageIndex + 1}：存在しない移動セットへ成長能力が設定されています。`);
         continue;
       }
       if ((unlock.capture || unlock.stationary) && (pattern.usage ?? "both") !== "move")
         e.push("捕獲解放は移動専用セットにだけ設定できます。");
       if (unlock.capture && unlock.stationary)
         e.push("通常捕獲と静止捕獲は同時解放できません。");
+      if (unlock.vectors && pattern.kind !== "leap")
+        e.push("成長後の跳躍点は固定跳躍セットにだけ設定できます。");
+      if (unlock.range !== undefined && pattern.kind !== "direction")
+        e.push("成長後の距離は方向移動セットにだけ設定できます。");
+      if (unlock.range !== undefined && pattern.kind === "direction") {
+        const rank = (range: Range) => range === "slide" ? 4 : range;
+        if (rank(unlock.range) < rank(pattern.range)) e.push("成長後の移動距離は短くできません。");
+      }
+      if (unlock.vectors?.some((vector) => Math.abs(vector.dx) > 3 || Math.abs(vector.dy) > 3 || (!vector.dx && !vector.dy)))
+        e.push("成長後の固定跳躍点は7×7範囲内に設定してください。");
       if ((unlock.cannon || unlock.jumpAllies || unlock.jumpEnemies) && pattern.kind !== "direction")
         e.push("キャノン・飛び越し解放は方向移動専用です。");
       if (pattern.kind === "direction" && pattern.range === 1 && (unlock.cannon || unlock.jumpAllies || unlock.jumpEnemies))

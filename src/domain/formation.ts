@@ -1,4 +1,4 @@
-import { definitionCost } from "./cost";
+import { definitionCost, growthStages } from "./cost";
 import type { Definition, FormationMode, Role, Setup } from "./types";
 
 export const backRoles: Role[] = [
@@ -36,7 +36,7 @@ export function crownCount(formation: (string | null)[], defs: Definition[]) {
   return formation.filter(
     (id) => {
       const definition = defs.find((item) => item.id === id);
-      return definition?.isCrown || definition?.growth?.unlockCrown;
+      return definition?.isCrown || !!(definition?.growth && growthStages(definition.growth).some((stage) => stage.unlockCrown));
     },
   ).length;
 }
@@ -78,7 +78,7 @@ export function formationErrors(
       errors.push(
         `${index >= 8 ? "Pawn" : backRoles[index]}枠のコスト上限を超えています。`,
       );
-    if ((definition.isCrown || definition.growth?.unlockCrown) && index !== 3)
+    if ((definition.isCrown || !!(definition.growth && growthStages(definition.growth).some((stage) => stage.unlockCrown))) && index !== 3)
       errors.push("バランス配置のCrownはQueen位置にだけ配置できます。");
   });
   if (crownCount(formation, defs) > 1)
@@ -97,7 +97,7 @@ export function formationErrors(
     );
   if (
     pawnDefinitions.some(
-      (definition) => definition.isCrown || definition.growth?.unlockCrown,
+      (definition) => definition.isCrown || !!(definition.growth && growthStages(definition.growth).some((stage) => stage.unlockCrown)),
     )
   )
     errors.push("バランス配置のPawn枠へCrownは配置できません。");

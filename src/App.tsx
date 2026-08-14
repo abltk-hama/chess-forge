@@ -5,6 +5,7 @@ import {
   evolvedDefinition,
   errors,
   growthCost,
+  growthStages,
   MAX_DEFINITIONS,
   normalize,
   RESERVED_SYMBOLS,
@@ -291,6 +292,20 @@ function GrowthConditionFields({
     </>
   );
 }
+function harderCondition(condition: EvolutionCondition): EvolutionCondition {
+  if (condition.kind === "territory")
+    return { ...condition, depth: Math.max(1, condition.depth - 1) as 1 | 2 | 3 };
+  if (condition.kind === "nearbyEnemies")
+    return { ...condition, threshold: condition.threshold + 1 };
+  return { ...condition, threshold: condition.threshold + (condition.kind === "captures" && condition.subject === "allies" || condition.kind === "losses" ? 2 : 1) };
+}
+function conditionShape(condition: EvolutionCondition) {
+  if (condition.kind === "captures") return `${condition.kind}:${condition.subject}`;
+  if (condition.kind === "territory") return `${condition.kind}:${condition.subject}`;
+  if (condition.kind === "evolutions") return `${condition.kind}:${condition.side}`;
+  if (condition.kind === "nearbyEnemies") return `${condition.kind}:${condition.center}:${condition.radius}`;
+  return condition.kind;
+}
 function ThresholdSelect({
   label,
   value,
@@ -576,6 +591,7 @@ function Editor({
   onDelete: (id: string) => void;
 }) {
   const [d, setD] = useState(blank);
+  const [growthStageIndex, setGrowthStageIndex] = useState(0);
   const editing = all.some((x) => x.id === d.id);
   const normalizedSymbol = d.symbol.trim().toUpperCase();
   const usedSymbols = all
@@ -599,24 +615,55 @@ function Editor({
       ...d,
       patterns: d.patterns.map((p, i) => (i === index ? pattern : p)),
     });
-  const setGrowthCondition = (condition: EvolutionCondition) =>
-    setD({
-      ...d,
-      growth: d.growth
-        ? { ...d.growth, condition }
-        : { condition, unlocks: {} },
-    });
+  const stageList = d.growth ? growthStages(d.growth) : [];
+  const activeGrowthStage = stageList[Math.min(growthStageIndex, stageList.length - 1)];
+  const writeGrowthStage = (
+    index: number,
+    stage: (typeof stageList)[number],
+  ) => {
+    if (!d.growth) return;
+    if (d.growth.stages) {
+      const stages = [...d.growth.stages];
+      stages[index] = stage;
+      setD({ ...d, growth: { ...d.growth, stages } });
+    } else {
+      setD({
+        ...d,
+        growth: {
+          ...d.growth,
+          condition: stage.condition,
+          unlockCrown: stage.unlockCrown,
+          unlocks: stage.unlocks,
+          localSwap: stage.localSwap,
+          globalSwap: stage.globalSwap,
+        },
+      });
+    }
+  };
+  const setGrowthCondition = (condition: EvolutionCondition) => {
+    if (!activeGrowthStage) return;
+    if (d.growth?.stages && conditionShape(condition) !== conditionShape(activeGrowthStage.condition)) {
+      const stages = d.growth.stages.map((stage, index) => ({
+        ...stage,
+        condition: index === 0 ? condition : harderCondition(condition),
+      }));
+      setD({ ...d, growth: { ...d.growth, stages } });
+      return;
+    }
+    writeGrowthStage(growthStageIndex, { ...activeGrowthStage, condition });
+  };
   const updateUnlock = (
     index: number,
     values: Partial<NonNullable<Definition["growth"]>["unlocks"][number]>,
   ) => {
     if (!d.growth) return;
-    const current = d.growth.unlocks[index] ?? {};
+    if (!activeGrowthStage) return;
+    const current = activeGrowthStage.unlocks[index] ?? {};
     const next = { ...current, ...values };
-    const unlocks = { ...d.growth.unlocks };
+    const unlocks = { ...activeGrowthStage.unlocks };
     if (Object.values(next).some(Boolean)) unlocks[index] = next;
     else delete unlocks[index];
-    setD({ ...d, growth: { ...d.growth, unlocks } });
+    writeGrowthStage(growthStageIndex, { ...activeGrowthStage, unlocks });
   };
   const toggle = (index: number, v: Vec) => {
     const pattern = d.patterns[index];
@@ -731,6 +778,14 @@ function Editor({
                                     value,
                                   ]),
                               ),
+                              stages: d.growth.stages?.map((stage) => ({
+                                ...stage,
+                                unlocks: Object.fromEntries(
+                                  Object.entries(stage.unlocks)
+                                    .filter(([key]) => Number(key) !== index)
+                                    .map(([key, value]) => [Number(key) > index ? Number(key) - 1 : Number(key), value]),
+                                ),
+                              })),
                             }
                           : undefined,
                       })
@@ -995,10 +1050,13 @@ function Editor({
                 setD({
                   ...d,
                   isCrown: x.target.checked,
-                  growth:
-                    x.target.checked && d.growth?.unlockCrown
-                      ? { ...d.growth, unlockCrown: false }
-                      : d.growth,
+                  growth: x.target.checked && d.growth
+                    ? {
+                        ...d.growth,
+                        unlockCrown: false,
+                        stages: d.growth.stages?.map((stage) => ({ ...stage, unlockCrown: false })),
+                      }
+                    : d.growth,
                 })
               }
             />
@@ -1058,13 +1116,34 @@ function Editor({
                 <option value="transformation">変身</option>
               </select>
             </label>
-            {d.growth && (
+            {d.growth && activeGrowthStage && (
               <>
+                <div className="growth-stage-tabs">
+                  {stageList.map((_, index) => (
+                    <button type="button" className={growthStageIndex === index ? "active" : ""} onClick={() => setGrowthStageIndex(index)} key={index}>
+                      段階{index + 1}
+                    </button>
+                  ))}
+                  {stageList.length < 2 ? (
+                    <button type="button" onClick={() => {
+                      const first = stageList[0];
+                      setD({ ...d, growth: { ...d.growth!, stages: [first, { ...structuredClone(first), condition: harderCondition(first.condition) }] } });
+                      setGrowthStageIndex(1);
+                    }}>段階2を追加</button>
+                  ) : (
+                    <button type="button" onClick={() => {
+                      const first = stageList[0];
+                      setD({ ...d, growth: { ...d.growth!, stages: undefined, condition: first.condition, unlockCrown: first.unlockCrown, unlocks: first.unlocks, localSwap: first.localSwap, globalSwap: first.globalSwap } });
+                      setGrowthStageIndex(0);
+                    }}>段階2を削除</button>
+                  )}
+                </div>
+                <p>段階ごとの能力は、前の段階を含む累積設定です。</p>
                 <label>
                   条件カテゴリー
                   <select
                     aria-label="成長条件カテゴリー"
-                    value={d.growth.condition.kind}
+                    value={activeGrowthStage.condition.kind}
                     onChange={(event) => {
                       const kind = event.target.value;
                       setGrowthCondition(
@@ -1101,30 +1180,24 @@ function Editor({
                   </select>
                 </label>
                 <GrowthConditionFields
-                  condition={d.growth.condition}
+                  condition={activeGrowthStage.condition}
                   onChange={setGrowthCondition}
                 />
                 <label>
                   <input
                     type="checkbox"
                     disabled={d.isCrown}
-                    checked={!!d.growth.unlockCrown}
+                    checked={!!activeGrowthStage.unlockCrown}
                     onChange={(event) =>
-                      setD({
-                        ...d,
-                        growth: {
-                          ...d.growth!,
-                          unlockCrown: event.target.checked,
-                        },
-                      })
+                      writeGrowthStage(growthStageIndex, { ...activeGrowthStage, unlockCrown: event.target.checked })
                     }
                   />
                   成長後にCrown化
                 </label>
-                <label><input type="checkbox" checked={!!d.growth.localSwap} onChange={(event) => setD({ ...d, growth: { ...d.growth!, localSwap: event.target.checked } })} />成長後に近接交換 (+3)</label>
-                <label><input type="checkbox" checked={!!d.growth.globalSwap} onChange={(event) => setD({ ...d, growth: { ...d.growth!, globalSwap: event.target.checked } })} />成長後に全域交換・1回 (+5)</label>
+                <label><input type="checkbox" checked={!!activeGrowthStage.localSwap} onChange={(event) => writeGrowthStage(growthStageIndex, { ...activeGrowthStage, localSwap: event.target.checked })} />成長後に近接交換 (+3)</label>
+                <label><input type="checkbox" checked={!!activeGrowthStage.globalSwap} onChange={(event) => writeGrowthStage(growthStageIndex, { ...activeGrowthStage, globalSwap: event.target.checked })} />成長後に全域交換・1回 (+5)</label>
                 {d.patterns.map((pattern, index) => {
-                  const unlock = d.growth?.unlocks[index] ?? {};
+                  const unlock = activeGrowthStage.unlocks[index] ?? {};
                   const moveOnly = (pattern.usage ?? "both") === "move";
                   const ranged =
                     pattern.kind === "direction" && pattern.range !== 1;
@@ -1157,6 +1230,21 @@ function Editor({
                         />
                         静止捕獲
                       </label>
+                      {pattern.kind === "direction" && (
+                        <label>
+                          成長後の距離
+                          <select
+                            aria-label={`移動セット${index + 1}の成長後距離`}
+                            value={unlock.range ?? pattern.range}
+                            onChange={(event) => updateUnlock(index, {
+                              range: (event.target.value === "slide" ? "slide" : Number(event.target.value)) as Range,
+                            })}
+                          >
+                            {[1, 2, 3].filter((value) => typeof pattern.range === "number" && value >= pattern.range).map((value) => <option value={value} key={value}>{value}</option>)}
+                            <option value="slide">スライド</option>
+                          </select>
+                        </label>
+                      )}
                       {ranged && (
                         <>
                           <label>
@@ -1214,6 +1302,23 @@ function Editor({
                             />
                             追加キャノン捕獲
                           </label>
+                        </>
+                      )}
+                      {pattern.kind === "leap" && (
+                        <>
+                          <p>成長後の固定跳躍点（同数までの再配置は追加ギャップなし）</p>
+                          <LeapPicker
+                            pattern={{ ...pattern, vectors: unlock.vectors ?? pattern.vectors }}
+                            onToggle={(vector) => {
+                              const vectors = unlock.vectors ?? pattern.vectors;
+                              const selected = vectors.some((item) => item.dx === vector.dx && item.dy === vector.dy);
+                              updateUnlock(index, {
+                                vectors: selected
+                                  ? vectors.filter((item) => item.dx !== vector.dx || item.dy !== vector.dy)
+                                  : [...vectors, vector],
+                              });
+                            }}
+                          />
                         </>
                       )}
                     </fieldset>
@@ -1336,10 +1441,16 @@ function Editor({
             コスト <strong className={n > 30 ? "danger" : ""}>{n}/30</strong>
           </h3>
           {d.growth && (
-            <p>
-              通常 {growthPricing.base} + 成長 {growthPricing.premium}（難度
-              {growthPricing.difficulty}）
-            </p>
+            <div>
+              <p>成長前 {growthPricing.base}</p>
+              {growthPricing.stages.map((stage) => (
+                <p key={stage.level}>
+                  段階{stage.level}：ギャップ {stage.gap} − 軽減 {stage.discount}
+                  （難度{stage.difficulty}）＝負担 {stage.charge}
+                </p>
+              ))}
+              <p>合計 {growthPricing.total}</p>
+            </div>
           )}
           {d.transformation && (
             <p>
@@ -1526,6 +1637,9 @@ function PositionEditor({
           definitionId: value,
           moved,
           evolved,
+          growthStage: evolved && selectedCustom?.growth
+            ? growthStages(selectedCustom.growth).length as 1 | 2
+            : undefined,
           captures: 0,
           reachedEnemyDepth: 8,
         }
@@ -1623,7 +1737,7 @@ function PositionEditor({
             }
             onChange={(event) => setEvolved(event.target.checked)}
           />
-          進化済みとして配置
+          進化済み（成長は最終段階）として配置
         </label>
         <div className="position-tool-actions">
           <button
@@ -1716,7 +1830,7 @@ function SetupView({
             const definition = defs.find(
               (item) => item.id === piece.definitionId,
             );
-            return definition?.isCrown || definition?.growth?.unlockCrown;
+            return definition?.isCrown || !!(definition?.growth && growthStages(definition.growth).some((stage) => stage.unlockCrown));
           })(),
       ).length,
   );
@@ -1957,8 +2071,11 @@ function conditionDescription(condition: EvolutionCondition) {
   return `${condition.center === "self" ? "この駒" : "King"}の${condition.radius * 2 + 1}×${condition.radius * 2 + 1}以内に敵${condition.threshold}体`;
 }
 function evolutionProgress(piece: NonNullable<Match["board"][number]>, match: Match, definition: Definition) {
-  if (piece.evolved) return "達成済み";
-  const condition = (definition.growth ?? definition.transformation)!.condition,
+  const currentStage = piece.growthStage ?? (piece.evolved ? 1 : 0);
+  const growth = definition.growth ? growthStages(definition.growth) : [];
+  if (growth.length && currentStage >= growth.length) return `段階${currentStage}達成済み`;
+  if (!growth.length && piece.evolved) return "達成済み";
+  const condition = growth[currentStage]?.condition ?? definition.transformation!.condition,
     stats = match.stats?.[piece.color],
     enemyStats = match.stats?.[other(piece.color)];
   if (condition.kind === "captures")
@@ -2073,14 +2190,14 @@ function MovementViewer({
   ];
   const [selected, setSelected] = useState(guides[0].key);
   const guide = guides.find((item) => item.key === selected) ?? guides[0];
-  const [showGrowth, setShowGrowth] = useState(false);
+  const [showGrowth, setShowGrowth] = useState(0);
   const shownDefinition =
     showGrowth && (guide.definition.growth || guide.definition.transformation || guide.definition.summoning)
       ? guide.definition.summoning
         ? summonedDefinition(guide.definition)
         : guide.definition.transformation
         ? transformedDefinition(guide.definition)
-        : evolvedDefinition(guide.definition)
+        : evolvedDefinition(guide.definition, showGrowth)
       : guide.definition;
   const custom = !guide.key.startsWith("standard:");
   const allyJump = shownDefinition.patterns.some(
@@ -2119,11 +2236,13 @@ function MovementViewer({
           表示状態
           <select
             aria-label="成長前後の表示"
-            value={showGrowth ? "after" : "before"}
-            onChange={(event) => setShowGrowth(event.target.value === "after")}
+            value={showGrowth}
+            onChange={(event) => setShowGrowth(Number(event.target.value))}
           >
-            <option value="before">進化前</option>
-            <option value="after">{guide.definition.summoning ? "派生駒" : "進化後"}</option>
+            <option value={0}>進化前</option>
+            {guide.definition.growth
+              ? growthStages(guide.definition.growth).map((_, index) => <option value={index + 1} key={index}>成長段階{index + 1}</option>)
+              : <option value={1}>{guide.definition.summoning ? "派生駒" : "進化後"}</option>}
           </select>
         </label>
       )}
@@ -2139,7 +2258,11 @@ function MovementViewer({
       <p>{custom ? `コスト ${definitionCost(guide.definition)}/30` : "標準駒"}</p>
       {guide.definition.isCrown && <p>♛ Crown</p>}
       {guide.definition.growth && (
-        <p>成長条件：{conditionDescription(guide.definition.growth.condition)}</p>
+        <p>
+          {growthStages(guide.definition.growth).map((stage, index) => (
+            <span key={index}>段階{index + 1}：{conditionDescription(stage.condition)}<br /></span>
+          ))}
+        </p>
       )}
       {guide.definition.transformation && (
         <p>
@@ -2474,7 +2597,9 @@ function Game({
               return evolution ? (
                 <div className="growth-status">
                   <strong>
-                    {inspectedPiece.evolved
+                    {definition?.growth
+                      ? `成長段階${inspectedPiece.growthStage ?? (inspectedPiece.evolved ? 1 : 0)}/${growthStages(definition.growth).length}`
+                      : inspectedPiece.evolved
                       ? definition?.transformation
                         ? "変身済み"
                         : "成長済み"
@@ -2482,7 +2607,9 @@ function Game({
                         ? "変身進捗"
                         : "成長進捗"}
                   </strong>
-                  <p>{conditionDescription(evolution.condition)}</p>
+                  <p>{definition?.growth
+                    ? growthStages(definition.growth).map((stage, index) => `段階${index + 1}: ${conditionDescription(stage.condition)}`).join(" / ")
+                    : conditionDescription(evolution.condition)}</p>
                   <p>
                     進捗：{evolutionProgress(inspectedPiece, match, definition!)}
                   </p>

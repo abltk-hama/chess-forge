@@ -1,4 +1,5 @@
 import { createMatch, threatened } from "./game";
+import { growthStages } from "./cost";
 import type {
   Color,
   Definition,
@@ -39,14 +40,15 @@ const isCrown = (piece: DraftPiece, definitions: Definition[]) =>
     const definition = definitions.find(
       (item) => item.id === piece.definitionId,
     );
-    return definition?.isCrown || (piece.evolved && definition?.growth?.unlockCrown);
+    const stage = piece.growthStage ?? (piece.evolved ? 1 : 0);
+    return definition?.isCrown || !!(definition?.growth && growthStages(definition.growth)[stage - 1]?.unlockCrown);
   })();
 const isPotentialCrown = (piece: DraftPiece, definitions: Definition[]) => {
   const definition =
     piece.role === "custom"
       ? definitions.find((item) => item.id === piece.definitionId)
       : undefined;
-  return !!(definition?.isCrown || definition?.growth?.unlockCrown);
+  return !!(definition?.isCrown || (definition?.growth && growthStages(definition.growth).some((stage) => stage.unlockCrown)));
 };
 
 function count(

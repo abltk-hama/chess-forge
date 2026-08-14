@@ -56,6 +56,59 @@ const matchWith = (definition: Definition): Match => {
 };
 
 describe("growth", () => {
+  it("prices two cumulative stages from each preceding gap", () => {
+    const definition: Definition = {
+      ...growing({}),
+      patterns: [{ kind: "direction", vectors: [{ dx: 0, dy: -1 }], range: 1, usage: "move" }],
+      growth: {
+        condition: { kind: "captures", subject: "allies", threshold: 2 },
+        unlocks: {},
+        stages: [
+          { condition: { kind: "captures", subject: "allies", threshold: 2 }, unlocks: { 0: { range: 2, capture: true } } },
+          { condition: { kind: "captures", subject: "allies", threshold: 6 }, unlocks: { 0: { range: "slide", capture: true } } },
+        ],
+      },
+    };
+    const pricing = growthCost(definition);
+    expect(pricing.stages).toHaveLength(2);
+    expect(pricing.stages[0].discount).toBe(Math.floor(pricing.stages[0].gap * 0.2));
+    expect(pricing.stages[1].discount).toBe(Math.floor(pricing.stages[1].gap * 0.6));
+    expect(pricing.total).toBe(pricing.base + pricing.stages[0].charge + pricing.stages[1].charge);
+    expect(errors(definition)).toEqual([]);
+  });
+
+  it("unlocks both stages when a shared condition crosses both thresholds", () => {
+    const definition: Definition = {
+      ...growing({}),
+      patterns: [{ kind: "leap", vectors: [{ dx: 0, dy: -1 }], usage: "both" }],
+      growth: {
+        condition: { kind: "captures", subject: "allies", threshold: 1 },
+        unlocks: {},
+        stages: [
+          { condition: { kind: "captures", subject: "allies", threshold: 1 }, unlocks: { 0: { vectors: [{ dx: 1, dy: -1 }] } } },
+          { condition: { kind: "captures", subject: "allies", threshold: 2 }, unlocks: { 0: { vectors: [{ dx: 2, dy: -1 }] } } },
+        ],
+      },
+    };
+    let match = matchWith(definition);
+    match.stats!.white.captures = 1;
+    match.board[idx({ row: 3, col: 3 })] = { id: "enemy", color: "black", role: "pawn", moved: true };
+    match = play(match, { from: { row: 4, col: 3 }, to: { row: 3, col: 3 } }, [definition]);
+    expect(match.board.find((item) => item?.id === "g")?.growthStage).toBe(2);
+  });
+
+  it("does not charge for relocating the same number of leap targets", () => {
+    const definition: Definition = {
+      ...growing({}),
+      patterns: [{ kind: "leap", vectors: [{ dx: 0, dy: -2 }], usage: "both" }],
+      growth: {
+        condition: { kind: "captures", subject: "self", threshold: 1 },
+        unlocks: { 0: { vectors: [{ dx: 2, dy: -1 }] } },
+      },
+    };
+    expect(growthCost(definition).stages[0].gap).toBe(0);
+  });
+
   it("discounts the difference between base and unlocked abilities", () => {
     const definition = growing({ 0: { capture: true } });
     const pricing = growthCost(definition);

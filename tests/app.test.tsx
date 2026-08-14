@@ -80,7 +80,7 @@ describe("App", () => {
     });
     fireEvent.click(screen.getByLabelText("通常捕獲"));
 
-    expect(screen.getByText(/通常 \d+ \+ 成長 \d+/)).toBeVisible();
+    expect(screen.getByText(/段階1：ギャップ \d+ − 軽減 \d+/)).toBeVisible();
     expect(screen.getByRole("button", { name: "保存" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     expect(screen.getByText(/成長あり/)).toBeVisible();
