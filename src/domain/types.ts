@@ -214,6 +214,7 @@ export interface SimulationResult {
   whiteDifficulty: AIDifficulty;
   blackDifficulty: AIDifficulty;
   maxPlies: number;
+  thinkTimeMs?: 10 | 25 | 100;
   whiteWins: number;
   blackWins: number;
   draws: number;

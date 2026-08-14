@@ -2,7 +2,7 @@ import { chooseMove, chooseSummonPlacement } from "./ai";
 import { createMatch, isRoyal, pieceText, placeSummon, play, threatened } from "./game";
 import type { AIDifficulty, Color, Definition, Match, Piece, PieceSimulationStat, Setup, SimulationResult } from "./types";
 
-export interface SimulationOptions { games: number; whiteDifficulty: AIDifficulty; blackDifficulty: AIDifficulty; maxPlies: number; seed: number; swapSides?: boolean; }
+export interface SimulationOptions { games: number; whiteDifficulty: AIDifficulty; blackDifficulty: AIDifficulty; maxPlies: number; seed: number; swapSides?: boolean; thinkTimeMs?: 10 | 25 | 100; }
 const rng = (seed: number) => { let value = seed >>> 0; return () => ((value = (value * 1664525 + 1013904223) >>> 0) / 4294967296); };
 const statKey = (piece: Piece) => `${piece.role === "custom" ? piece.definitionId : piece.role}${piece.summoned ? ":summoned" : ""}`;
 const statLabel = (piece: Piece, defs: Definition[]) => piece.role === "custom" ? `${pieceText(piece, defs).toUpperCase()}${piece.summoned ? " 派生" : ""}` : piece.role;
@@ -31,7 +31,7 @@ export function runSimulation(defs: Definition[], setup: Setup, preset: Match["p
       const swapped = !!options.swapSides && gameIndex >= Math.ceil(options.games / 2);
       const whiteDifficulty = swapped ? options.blackDifficulty : options.whiteDifficulty;
       const blackDifficulty = swapped ? options.whiteDifficulty : options.blackDifficulty;
-      const movingColor = match.turn, move = chooseMove(match, defs, movingColor === "white" ? whiteDifficulty : blackDifficulty, random, 10);
+      const movingColor = match.turn, move = chooseMove(match, defs, movingColor === "white" ? whiteDifficulty : blackDifficulty, random, options.thinkTimeMs ?? 25);
       if (!move) { match = { ...match, draw: true, message: "合法手がありません。" }; break; }
       const mover = match.board[move.from.row * 8 + move.from.col]!;
       const before = new Map(match.board.flatMap((piece) => piece ? [[piece.id, piece] as const] : []));
@@ -50,7 +50,7 @@ export function runSimulation(defs: Definition[], setup: Setup, preset: Match["p
     match.board.forEach((piece) => { if (piece) ensure(stats, piece, defs).survivors++; });
     if (match.winner === "white") whiteWins++; else if (match.winner === "black") blackWins++; else draws++;
     games.push({ winner: match.winner, draw: match.draw, plies, reason: match.message, seed, history: match.history });
-    progress?.(gameIndex + 1, { id: `sim-${options.seed}`, createdAt: new Date().toISOString(), gamesRequested: options.games, gamesCompleted: games.length, whiteDifficulty: options.whiteDifficulty, blackDifficulty: options.blackDifficulty, maxPlies: options.maxPlies, whiteWins, blackWins, draws, games: [...games], pieces: [...stats.values()].map((item) => ({ ...item })), definitions: structuredClone(defs), setup: structuredClone(setup), preset });
+    progress?.(gameIndex + 1, { id: `sim-${options.seed}`, createdAt: new Date().toISOString(), gamesRequested: options.games, gamesCompleted: games.length, whiteDifficulty: options.whiteDifficulty, blackDifficulty: options.blackDifficulty, maxPlies: options.maxPlies, thinkTimeMs: options.thinkTimeMs ?? 25, whiteWins, blackWins, draws, games: [...games], pieces: [...stats.values()].map((item) => ({ ...item })), definitions: structuredClone(defs), setup: structuredClone(setup), preset });
   }
-  return { id: `sim-${Date.now()}`, createdAt: new Date().toISOString(), gamesRequested: options.games, gamesCompleted: games.length, whiteDifficulty: options.whiteDifficulty, blackDifficulty: options.blackDifficulty, maxPlies: options.maxPlies, whiteWins, blackWins, draws, games, pieces: [...stats.values()], definitions: structuredClone(defs), setup: structuredClone(setup), preset };
+  return { id: `sim-${Date.now()}`, createdAt: new Date().toISOString(), gamesRequested: options.games, gamesCompleted: games.length, whiteDifficulty: options.whiteDifficulty, blackDifficulty: options.blackDifficulty, maxPlies: options.maxPlies, thinkTimeMs: options.thinkTimeMs ?? 25, whiteWins, blackWins, draws, games, pieces: [...stats.values()], definitions: structuredClone(defs), setup: structuredClone(setup), preset };
 }
