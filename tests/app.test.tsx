@@ -122,7 +122,7 @@ describe("App", () => {
     fireEvent.click(screen.getByRole("button", { name: "前" }));
     fireEvent.click(screen.getByRole("checkbox", { name: /初回限定/ }));
     fireEvent.click(screen.getByRole("checkbox", { name: /キャノン捕獲/ }));
-    expect(screen.getByText(/9\/30/)).toBeInTheDocument();
+    expect(screen.getByText(/14\/30/)).toBeInTheDocument();
     expect(
       screen.getByRole("combobox", { name: "味方飛び越し上限" }),
     ).toHaveValue("0");

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { cost, errors, normalize } from "../src/domain/cost";
+import {
+  cost,
+  errors,
+  normalize,
+  prepareDefinitionForEditing,
+} from "../src/domain/cost";
 import type { Definition } from "../src/domain/types";
 const make = (partial: Partial<Definition> = {}): Definition => ({
   id: "a",
@@ -361,6 +366,57 @@ describe("cost", () => {
         }),
       ),
     ).toBe(20));
+
+  it("uses canonical jump values after editing regardless of update order", () => {
+    const legacy = make({
+      patterns: [
+        {
+          kind: "direction",
+          vectors: [{ dx: 1, dy: 0 }],
+          range: "slide",
+          canJump: true,
+        },
+      ],
+      transformation: {
+        condition: { kind: "captures", subject: "self", threshold: 1 },
+        name: "Next",
+        symbol: "NX",
+        patterns: [
+          {
+            kind: "direction",
+            vectors: [{ dx: 0, dy: -1 }],
+            range: 2,
+            jumpAllies: false,
+            jumpEnemies: true,
+          },
+        ],
+      },
+    });
+    expect(cost(legacy)).toBe(20);
+
+    const edited = prepareDefinitionForEditing(legacy);
+    expect(edited.patterns[0]).toMatchObject({
+      jumpAllies: 2,
+      jumpEnemies: 2,
+    });
+    expect(edited.patterns[0]).not.toHaveProperty("canJump");
+    expect(edited.transformation?.patterns[0]).toMatchObject({
+      jumpAllies: 0,
+      jumpEnemies: 2,
+    });
+
+    const pattern = edited.patterns[0];
+    if (pattern.kind !== "direction") throw new Error("direction expected");
+    const alliesFirst = {
+      ...edited,
+      patterns: [{ ...pattern, jumpAllies: 1, jumpEnemies: 0 as const }],
+    };
+    const enemiesFirst = {
+      ...edited,
+      patterns: [{ ...pattern, jumpEnemies: 0 as const, jumpAllies: 1 }],
+    };
+    expect(cost(alliesFirst)).toBe(cost(enemiesFirst));
+  });
 
   it("prices three sliding directions plus jump at 30", () =>
     expect(

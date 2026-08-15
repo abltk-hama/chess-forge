@@ -14,6 +14,7 @@ import {
   summonLimit,
   summonedDefinition,
   jumpLimit,
+  prepareDefinitionForEditing,
 } from "./domain/cost";
 import {
   createMatch,
@@ -103,28 +104,7 @@ const blank = (): Definition => ({
     },
   ],
 });
-const editable = (source: Definition): Definition => ({
-  ...structuredClone(source),
-  patterns: source.patterns.map((pattern) =>
-    pattern.kind === "leap"
-      ? structuredClone(pattern)
-      : {
-          kind: "direction",
-          vectors: structuredClone(pattern.vectors),
-          range: pattern.range,
-          usage: pattern.usage ?? "both",
-          phase: pattern.phase ?? 1,
-          initialOnly: pattern.initialOnly ?? false,
-          cannon: pattern.cannon ?? false,
-          jumpAllies:
-            pattern.range !== 1 &&
-            jumpLimit(pattern.jumpAllies, pattern.canJump),
-          jumpEnemies:
-            pattern.range !== 1 &&
-            jumpLimit(pattern.jumpEnemies, pattern.canJump),
-        },
-  ),
-});
+const editable = prepareDefinitionForEditing;
 const usesLegacyJump = (definition: Definition) =>
   definition.patterns.some(
     (pattern) =>
@@ -877,13 +857,9 @@ function Editor({
                               ? "slide"
                               : Number(x.target.value)) as Range,
                             jumpAllies:
-                              x.target.value === "1"
-                                ? false
-                                : pattern.jumpAllies,
+                              x.target.value === "1" ? 0 : pattern.jumpAllies,
                             jumpEnemies:
-                              x.target.value === "1"
-                                ? false
-                                : pattern.jumpEnemies,
+                              x.target.value === "1" ? 0 : pattern.jumpEnemies,
                             cannon:
                               x.target.value === "1" ? false : pattern.cannon,
                             canJump: undefined,
@@ -978,10 +954,10 @@ function Editor({
                             ...pattern,
                             cannon: event.target.checked,
                             jumpAllies: event.target.checked
-                              ? false
+                              ? 0
                               : pattern.jumpAllies,
                             jumpEnemies: event.target.checked
-                              ? false
+                              ? 0
                               : pattern.jumpEnemies,
                             canJump: event.target.checked
                               ? undefined

@@ -35,6 +35,38 @@ const key = (v: Vec) => `${v.dx},${v.dy}`;
 export const unique = (v: Vec[]) => [
   ...new Map(v.filter((x) => x.dx || x.dy).map((x) => [key(x), x])).values(),
 ];
+const preparePatternForEditing = (pattern: Pattern): Pattern => {
+  if (pattern.kind === "leap")
+    return { ...pattern, vectors: pattern.vectors.map((vector) => ({ ...vector })) };
+  const { canJump: _legacyCanJump, ...current } = pattern;
+  return {
+    ...current,
+    vectors: pattern.vectors.map((vector) => ({ ...vector })),
+    jumpAllies:
+      pattern.range === 1 ? 0 : jumpLimit(pattern.jumpAllies, pattern.canJump),
+    jumpEnemies:
+      pattern.range === 1 ? 0 : jumpLimit(pattern.jumpEnemies, pattern.canJump),
+  };
+};
+/** Converts legacy jump fields to the canonical numeric form once editing begins. */
+export function prepareDefinitionForEditing(d: Definition): Definition {
+  return {
+    ...structuredClone(d),
+    patterns: d.patterns.map(preparePatternForEditing),
+    transformation: d.transformation
+      ? {
+          ...structuredClone(d.transformation),
+          patterns: d.transformation.patterns.map(preparePatternForEditing),
+        }
+      : undefined,
+    summoning: d.summoning
+      ? {
+          ...structuredClone(d.summoning),
+          patterns: d.summoning.patterns.map(preparePatternForEditing),
+        }
+      : undefined,
+  };
+}
 export function migrateDefinition(d: Definition): Definition {
   return {
     ...d,
