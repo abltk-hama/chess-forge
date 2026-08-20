@@ -1,0 +1,45 @@
+# 対局・駒作成
+
+## 対局
+
+- ルール：標準チェス、Royal Hunt ANY、Royal Hunt ALL
+- モード：ローカル対局、AI戦、AI対AI観戦
+- 中断・再開：ローカル保存
+- 保存：JSON入出力、自動読込ファイル
+
+## 配置
+
+| モード | 内容 |
+|---|---|
+| バランス配置 | Pawn枠の置換予算、後列役割ごとの上限、Crown数制限を適用 |
+| 自由配置 | King以外を任意に編集、1駒30点まで |
+
+バランス配置はPawnを10点以下=1、11〜15点=2として合計4まで。Rook / Knight / Bishop枠は25点、Queen枠は30点まで。
+
+## Pattern
+
+- `direction`: 8方向、R1/R2/R3/Slide、用途、飛び越し、キャノン等
+- `leap`: 7×7内の固定跳躍先、用途、追跡等
+- 用途：`move` / `capture` / `stationary` / `both`
+- 初回限定、進化後初回限定、進化限定、2回目移動も設定可能
+
+## direction料金
+
+| 項目 | 内容 |
+|---|---|
+| R1方向料金 | 全方向1点 |
+| R2以上方向料金 | 前3点、その他2点 |
+| Range基本 | R1=0、R2=2、R3=5、Slide=10。最高Rangeのみ |
+| R1 Usage | 追加なし |
+| R2以上 Usage | move=0、capture=1、stationary=1、both=2（方向ごと） |
+| Usage財布 | 上限20。評価値 R1=1/R2=2/R3=4/Slide=6。不足Usageのみ実課金 |
+
+`DirectionCost = 方向料金 + 最高Range基本 + max(0, Usage料金 - Usage財布)`
+
+代表値：R2十字=11、R2十字+R1斜め=15、R3十字=18、R3前後+R2左右=14、Slide十字=27。
+
+leap、飛び越し、キャノン、2回移動、初回限定、特殊能力は既存の料金を維持する。最終計算は`cost()`、内訳表示は`directionCostBreakdown()`を使う。
+
+## 実装時の確認
+
+新機能は型、コスト、合法手、状態遷移、UI、AI、保存互換、テストへの影響を確認する。保存済みDefinitionのJSON構造は維持し、新しい料金式で再評価する。
