@@ -400,7 +400,7 @@ export function pseudo(
   }
   return [
     ...new Map(
-      out.map((x) => [`${x.to.row},${x.to.col},${!!x.stationary}`, x]),
+      out.map((x) => [`${x.to.row},${x.to.col},${!!x.stationary},${x.passCaptureAt?.row ?? ""},${x.passCaptureAt?.col ?? ""}`, x]),
     ).values(),
   ];
 }
@@ -1059,17 +1059,17 @@ export function play(s: Match, m: Move, d: Definition[]) {
   }
   // 追跡状態更新。
   // 1) 手番を終えた側の既存追跡期限を1手消費する。
-  n.trackingTargets = (n.trackingTargets ?? [])
-    .map((item) => {
+  n.trackingTargets = (n.trackingTargets ?? []).flatMap((item) => {
       const tracker = n.board.find((piece) => piece?.id === item.trackerId);
       if (!tracker || tracker.color !== p.color) return item;
-      return { ...item, remaining: (item.remaining - 1) as 0 | 1 };
-    })
+      const remaining = item.remaining - 1;
+      return remaining > 0 ? [{ ...item, remaining: remaining as 1 | 2 }] : [];
+    }).flatMap((item) => Array.isArray(item) ? item : [item])
     .filter((item) => item.remaining > 0 && n.board.some((piece) => piece?.id === item.trackerId) && n.board.some((piece) => piece?.id === item.targetId));
 
   // 2) 今終了した手番の相手が前手番終了時に監視した敵について、
   //    固定跳躍射程外へ逃げ、かつ追跡者から3マス以内なら追跡成立。
-  const remainingWatches = [];
+  const remainingWatches: NonNullable<Match["trackingWatches"]> = [];
   const newTargets = [...(n.trackingTargets ?? [])];
   for (const watch of n.trackingWatches ?? []) {
     const trackerIndex = n.board.findIndex((piece) => piece?.id === watch.trackerId);

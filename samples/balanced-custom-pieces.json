@@ -471,7 +471,7 @@
               "dy": -1
             }
           ],
-          "range": 3,
+          "range": 1,
           "usage": "both",
           "phase": 1,
           "jumpAllies": 1,

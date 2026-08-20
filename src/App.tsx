@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import {
   definitionCost,
+  directionCostBreakdown,
   evolvedDefinition,
   errors,
   growthCost,
@@ -671,6 +672,7 @@ function Editor({
         : []),
     ],
     growthPricing = growthCost(d),
+    directionPricing = directionCostBreakdown(d.patterns),
     n = growthPricing.total,
     canSave = !e.length && (editing || all.length < MAX_DEFINITIONS);
   return (
@@ -1521,6 +1523,15 @@ function Editor({
           <h3>
             コスト <strong className={n > 30 ? "danger" : ""}>{n}/30</strong>
           </h3>
+          <details className="cost-guide">
+            <summary>移動料金表・内訳</summary>
+            <p>R1：1点／方向　|　R2以上：前3点・その他2点／方向</p>
+            <p>Range基本：R1 +0 / R2 +2 / R3 +5 / Slide +10（最高Rangeのみ）</p>
+            <p>Usage：R1は追加なし、R2以上は移動0・捕獲1・静止1・両方2</p>
+            <p>Usage財布：上限20、評価値 R1=1 / R2=2 / R3=4 / Slide=6</p>
+            <p>方向 {directionPricing.moveDirection} + Range {directionPricing.rangeBase} + Usage実課金 {directionPricing.usageCharge} = {directionPricing.total}</p>
+            <p>財布残高 {directionPricing.usageWallet} / 20（評価値 {directionPricing.rangeEvaluation}、Usage {directionPricing.usage}）</p>
+          </details>
           {d.growth && (
             <div>
               <p>成長前 {growthPricing.base}</p>
@@ -2720,13 +2731,6 @@ function Game({
             }
             if (sealed) statuses.push("封印中：特殊能力停止（この陣営の手番終了まで）");
             if (inspectedPiece.rebirthEnhanced) statuses.push("強化再生済み：再生後強化が有効");
-            const activeForStatus = definition
-              ? inspectedPiece.growthStage && definition.growth
-                ? evolvedDefinition(definition, inspectedPiece.growthStage)
-                : inspectedPiece.evolved && definition.transformation
-                  ? transformedDefinition(definition)
-                  : definition
-              : undefined;
             const tracked = (match.trackingTargets ?? []).filter((item) => item.trackerId === inspectedPiece.id);
             for (const item of tracked) {
               const target = match.board.find((piece) => piece?.id === item.targetId);

@@ -23,7 +23,15 @@ export const COST = {
     number
   >,
   secondPhaseBase: 3,
-  slideBase: 5,
+  /** 新方向料金体系。Slideは方向料金とは別に最高Range基本料金を持つ。 */
+  slideBase: 10,
+  rangeBase: { 1: 0, 2: 2, 3: 5, slide: 10 } as Record<Range, number>,
+  usageWalletLimit: 20,
+  usageEvaluation: { 1: 1, 2: 2, 3: 4, slide: 6 } as Record<Range, number>,
+  directionR1Move: 1,
+  directionLongMove: 2,
+  directionForwardLongMove: 3,
+  directionUsage: { move: 0, capture: 1, stationary: 1, both: 2 } as Record<Usage, number>,
   jumpDirectionBase: 2,
   allyJumpPerPiece: 1,
   enemyJumpPerPiece: 2,
@@ -288,6 +296,57 @@ export const definitionCost = (definition: Definition) =>
   definition.growth
     ? growthCost(definition).total
     : cost({ ...definition, transformation: undefined, summoning: undefined }) + (definition.summoning ? (definition.summoning.timing === "split" ? 0 : 5) + (definition.summoning.range === "movement" ? 3 : 0) : 0);
+
+export interface DirectionCostBreakdown {
+  moveDirection: number;
+  rangeBase: number;
+  rangeEvaluation: number;
+  usage: number;
+  usageWallet: number;
+  usageCharge: number;
+  total: number;
+}
+
+const rangeRank = (range: Range) => range === "slide" ? 4 : range;
+const directionMoveUnit = (vector: Vec, range: Range) => {
+  if (range === 1) return COST.directionR1Move;
+  return vector.dx === 0 && vector.dy < 0
+    ? COST.directionForwardLongMove
+    : COST.directionLongMove;
+};
+
+/** Direction Pattern群だけを、新しい財布式で評価する純粋関数。 */
+export function directionCostBreakdown(patterns: Pattern[]): DirectionCostBreakdown {
+  const directionsOnly = patterns.filter((pattern): pattern is Extract<Pattern, { kind: "direction" }> => pattern.kind === "direction" && !pattern.growthStationaryBase);
+  if (!directionsOnly.length) return { moveDirection: 0, rangeBase: 0, rangeEvaluation: 0, usage: 0, usageWallet: COST.usageWalletLimit, usageCharge: 0, total: 0 };
+  let moveDirection = 0;
+  let usage = 0;
+  let rangeEvaluation = 0;
+  let highestRank = 0;
+  for (const pattern of directionsOnly) {
+    highestRank = Math.max(highestRank, rangeRank(pattern.range));
+    const effectiveUsage = pattern.phase === 2 && (pattern.secondTrigger ?? "normal") === "normal"
+      ? "move"
+      : pattern.usage ?? "both";
+    const initial = !!(pattern.initialOnly || pattern.evolvedInitialOnly);
+    const vectors = pattern.vectors;
+    for (const vector of vectors) {
+      let unit = directionMoveUnit(vector, pattern.range);
+      if (pattern.phase === 2 && (pattern.secondTrigger ?? "normal") === "normal" && effectiveUsage === "move") unit = Math.max(1, unit - 1);
+      moveDirection += initial ? Math.ceil(unit / 2) : unit;
+      rangeEvaluation += COST.usageEvaluation[pattern.range];
+      if (rangeRank(pattern.range) >= 2) {
+        const usageUnit = COST.directionUsage[effectiveUsage];
+        usage += initial ? Math.ceil(usageUnit / 2) : usageUnit;
+      }
+    }
+  }
+  const highestRange: Range = highestRank >= 4 ? "slide" : highestRank === 3 ? 3 : highestRank === 2 ? 2 : 1;
+  const rangeBase = COST.rangeBase[highestRange];
+  const usageWallet = Math.max(0, COST.usageWalletLimit - rangeEvaluation);
+  const usageCharge = Math.max(0, usage - usageWallet);
+  return { moveDirection, rangeBase, rangeEvaluation, usage, usageWallet, usageCharge, total: moveDirection + rangeBase + usageCharge };
+}
 export function transformationLimit(d: Definition) {
   if (!d.transformation) return 30;
   return [30, 24, 26, 28, 29][conditionDifficulty(d.transformation.condition)];
@@ -306,6 +365,7 @@ export function cost(d: Definition) {
   let n = d.isCrown ? COST.crown : 0,
     cannon = false,
     slide = false;
+  const directionPricing = directionCostBreakdown(normalize(d).patterns);
   for (const p of normalize(d).patterns) {
     if (p.growthStationaryBase) continue;
     const usage = p.usage ?? "both";
@@ -317,25 +377,7 @@ export function cost(d: Definition) {
       if (p.phase === 2 && (!p.secondTrigger || p.secondTrigger === "normal")) n += COST.secondPhaseBase;
       if (p.tracking) n += COST.tracking;
     } else {
-      if (p.range === "slide") {
-        slide = true;
-        const slideCost = p.vectors.reduce((sum, vector) => {
-          const rawUnit = slideDirectionCost(vector, usage);
-          const unit = p.phase === 2 && (p.secondTrigger ?? "normal") === "normal" && usage === "move"
-            ? Math.max(1, rawUnit - 1)
-            : rawUnit;
-          return sum + (p.initialOnly || p.evolvedInitialOnly ? Math.ceil(unit / 2) : unit);
-        }, 0);
-        n += p.phase === 2 && p.secondTrigger && p.secondTrigger !== "normal" && !p.initialOnly && !p.evolvedInitialOnly ? Math.ceil(slideCost / 2) : slideCost;
-      } else {
-        const rawUnit = COST.usageRange[usage][p.range];
-        const unit = p.phase === 2 && (p.secondTrigger ?? "normal") === "normal" && usage === "move"
-          ? Math.max(1, rawUnit - 1)
-          : rawUnit;
-        let value = p.vectors.length * (p.initialOnly || p.evolvedInitialOnly ? Math.ceil(unit / 2) : unit);
-        if (p.phase === 2 && p.secondTrigger && p.secondTrigger !== "normal" && !p.initialOnly && !p.evolvedInitialOnly) value = Math.ceil(value / 2);
-        n += value;
-      }
+      slide ||= p.range === "slide";
       if (p.phase === 2 && (!p.secondTrigger || p.secondTrigger === "normal")) n += COST.secondPhaseBase;
       if (p.cannon || p.growthCannon) {
         cannon = true;
@@ -363,7 +405,7 @@ export function cost(d: Definition) {
     }
   }
   const evolution = d.growth ?? d.transformation;
-  n += (slide ? COST.slideBase : 0) + (cannon ? COST.cannonBase : 0) + (evolution?.localSwap ? 3 : 0) + (evolution?.globalSwap ? 5 : 0);
+  n += directionPricing.total + (cannon ? COST.cannonBase : 0) + (evolution?.localSwap ? 3 : 0) + (evolution?.globalSwap ? 5 : 0);
   n += (d.dark ? COST.dark : 0) + (d.barrier ? COST.barrier : 0) + (d.deathbind ? COST.deathbind : 0) + (d.rebirth ? COST.rebirth + (d.rebirth.splitAllowed ? 5 : 0) : 0) + (d.devotion ? COST.devotion : 0) + (d.seal ? COST.seal : 0) + (d.eagleHunt && d.transformation ? COST.eagleHunt : 0) + (d.demonContract && d.transformation ? COST.demonContract : 0);
   if (d.rebirth?.enhancedPattern !== undefined && d.rebirth.enhancement) {
     const at = d.rebirth.enhancedAt;
@@ -380,20 +422,6 @@ export function cost(d: Definition) {
     n = Math.max(3, Math.ceil((n + jumpPremium) * 0.6));
   }
   return Math.max(0, n);
-}
-function slideDirectionCost(vector: Vec, usage: Usage) {
-  const full = usage === "both" || usage === "stationary";
-  const base =
-    vector.dx && vector.dy
-      ? 4
-      : vector.dy < 0
-        ? 6
-        : vector.dy > 0
-          ? 5
-          : vector.dx
-            ? 3
-            : 0;
-  return full ? base : Math.max(0, base - 1);
 }
 function legacyCost(d: Definition) {
   const rangeCost: Record<Range, number> = { 1: 1, 2: 2, 3: 4, slide: 5 };

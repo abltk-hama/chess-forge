@@ -127,24 +127,11 @@ describe("growth", () => {
     );
   });
 
-  it("discounts the difference between base and unlocked abilities", () => {
+  it("does not charge an R1 usage unlock", () => {
     const definition = growing({ 0: { capture: true } });
     const pricing = growthCost(definition);
-    expect(pricing.base).toBeLessThan(pricing.total);
-    expect(pricing.premium).toBe(
-      Math.max(
-        1,
-        Math.ceil(
-          (definitionCost({
-            ...definition,
-            growth: undefined,
-            patterns: [{ ...definition.patterns[0], usage: "both" }],
-          }) -
-            pricing.base) *
-            0.85,
-        ),
-      ),
-    );
+    expect(pricing.total).toBe(pricing.base);
+    expect(pricing.premium).toBe(0);
     expect(errors(definition)).toEqual([]);
   });
 

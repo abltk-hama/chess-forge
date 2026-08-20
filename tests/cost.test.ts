@@ -46,7 +46,7 @@ describe("cost", () => {
           ],
         }),
       ),
-    ).toBe(15);
+    ).toBe(19);
     expect(
       cost(
         make({
@@ -61,7 +61,7 @@ describe("cost", () => {
           ],
         }),
       ),
-    ).toBe(24);
+    ).toBe(28);
     expect(
       cost(
         make({
@@ -70,7 +70,7 @@ describe("cost", () => {
           ],
         }),
       ),
-    ).toBe(31);
+    ).toBe(36);
   });
 
   it("rejects cannon combined with move-only or free jumping", () => {
@@ -118,7 +118,7 @@ describe("cost", () => {
           patterns: [{ kind: "direction", vectors, range: 3, usage: "move" }],
         }),
       ),
-    ).toBe(12);
+    ).toBe(11);
     expect(
       cost(
         make({
@@ -127,7 +127,7 @@ describe("cost", () => {
           ],
         }),
       ),
-    ).toBe(12);
+    ).toBe(11);
     expect(
       cost(
         make({
@@ -167,7 +167,7 @@ describe("cost", () => {
           ],
         }),
       ),
-    ).toBe(6);
+    ).toBe(9);
   });
 
   it("discounts each normal second-move direction by one but keeps the base fee", () => {
@@ -185,7 +185,7 @@ describe("cost", () => {
           ],
         }),
       ),
-    ).toBe(7);
+    ).toBe(8);
   });
 
   it("prices movement squares, distance, and crossing limits", () => {
@@ -214,7 +214,7 @@ describe("cost", () => {
           ],
         }),
       ),
-    ).toBe(15);
+    ).toBe(12);
     expect(
       cost(
         make({
@@ -229,7 +229,7 @@ describe("cost", () => {
           ],
         }),
       ),
-    ).toBe(12);
+    ).toBe(14);
   });
 
   it("prices slide once per piece plus each relative direction", () => {
@@ -256,7 +256,7 @@ describe("cost", () => {
           ],
         }),
       ),
-    ).toBe(22);
+    ).toBe(27);
     expect(
       cost(
         make({
@@ -270,7 +270,7 @@ describe("cost", () => {
           ],
         }),
       ),
-    ).toBe(21);
+    ).toBe(26);
     expect(
       cost(
         make({
@@ -289,14 +289,14 @@ describe("cost", () => {
           ],
         }),
       ),
-    ).toBe(14);
+    ).toBe(16);
     expect(
       cost(
         make({
           patterns: [slide([{ dx: 0, dy: -1 }]), slide([{ dx: 0, dy: 1 }], 2)],
         }),
       ),
-    ).toBe(19);
+    ).toBe(17);
   });
 
   it("prices ally and enemy jumping with separate range premiums", () => {
@@ -507,4 +507,37 @@ it("does not inherit rebirth costs into summoned or split-derived pieces", () =>
   const derived = summonedDefinition(definition);
   expect(derived.rebirth).toBeUndefined();
   expect(cost(derived)).toBe(cost(make({ name: "Shard", symbol: "SH" })));
+});
+
+describe("direction cost wallet", () => {
+  const direction = (vectors: Array<{ dx: number; dy: number }>, range: 1 | 2 | 3 | "slide", usage: "both" | "move" | "capture" | "stationary" = "both") => ({ kind: "direction" as const, vectors, range, usage });
+  const orthogonal = [{ dx: 0, dy: -1 }, { dx: 1, dy: 0 }, { dx: 0, dy: 1 }, { dx: -1, dy: 0 }];
+  const diagonal = [{ dx: 1, dy: -1 }, { dx: 1, dy: 1 }, { dx: -1, dy: 1 }, { dx: -1, dy: -1 }];
+  it("prices R1, R2, R3 and Slide benchmarks", () => {
+    expect(cost(make({ patterns: [direction(orthogonal.slice(0, 1), 1)] }))).toBe(1);
+    expect(cost(make({ patterns: [direction([...orthogonal, ...diagonal], 1)] }))).toBe(8);
+    expect(cost(make({ patterns: [direction(diagonal, 2)] }))).toBe(10);
+    expect(cost(make({ patterns: [direction(orthogonal, 2)] }))).toBe(11);
+    expect(cost(make({ patterns: [direction(orthogonal, 3)] }))).toBe(18);
+    expect(cost(make({ patterns: [direction(diagonal, "slide")] }))).toBe(26);
+    expect(cost(make({ patterns: [direction(orthogonal, "slide")] }))).toBe(27);
+  });
+  it("prices mixed ranges without charging multiple range bases", () => {
+    expect(cost(make({ patterns: [direction([{ dx: 0, dy: -1 }, { dx: 0, dy: 1 }], 3), direction([{ dx: -1, dy: 0 }, { dx: 1, dy: 0 }], 2)] }))).toBe(14);
+    expect(cost(make({ patterns: [direction([{ dx: 0, dy: -1 }], "slide"), direction([{ dx: 0, dy: 1 }, { dx: -1, dy: 0 }, { dx: 1, dy: 0 }], 1)] }))).toBe(16);
+    expect(cost(make({ patterns: [direction([{ dx: 0, dy: -1 }], "slide"), direction([{ dx: 0, dy: 1 }, { dx: -1, dy: 0 }, { dx: 1, dy: 0 }], 2)] }))).toBe(19);
+    expect(cost(make({ patterns: [direction([{ dx: 0, dy: -1 }], "slide"), direction([{ dx: 0, dy: 1 }, { dx: -1, dy: 0 }, { dx: 1, dy: 0 }], 3)] }))).toBe(25);
+  });
+  it("charges usage only when the wallet is insufficient", () => {
+    const r2 = [{ dx: 1, dy: 0 }, { dx: -1, dy: 0 }, { dx: 0, dy: 1 }, { dx: 0, dy: -1 }];
+    expect(cost(make({ patterns: [direction(r2, 2, "move")] }))).toBe(11);
+    expect(cost(make({ patterns: [direction(r2, 2, "capture")] }))).toBe(11);
+    expect(cost(make({ patterns: [direction(r2, 2, "stationary")] }))).toBe(11);
+    expect(cost(make({ patterns: [direction(r2, 2, "both")] }))).toBe(11);
+    const slide = [{ dx: 0, dy: -1 }, { dx: 0, dy: 1 }, { dx: -1, dy: 0 }, { dx: 1, dy: 0 }];
+    expect(cost(make({ patterns: [direction(slide, "slide", "move")] }))).toBe(19);
+    expect(cost(make({ patterns: [direction(slide, "slide", "capture")] }))).toBe(23);
+    expect(cost(make({ patterns: [direction(slide, "slide", "stationary")] }))).toBe(23);
+    expect(cost(make({ patterns: [direction(slide, "slide", "both")] }))).toBe(27);
+  });
 });
