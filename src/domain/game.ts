@@ -13,7 +13,7 @@ import type {
 } from "./types";
 import { directions, idx, inside, other } from "./types";
 import { formationFromSetup } from "./formation";
-import { evolvedDefinition, growthStages, jumpLimit, summonedDefinition, transformedDefinition } from "./cost";
+import { evolvedDefinition, growthStages, jumpLimit, rebirthEnhancedDefinition, summonedDefinition, transformedDefinition } from "./cost";
 import type { EvolutionCondition } from "./types";
 const back: Role[] = [
   "rook",
@@ -32,6 +32,9 @@ const label: Record<Exclude<Role, "custom">, string> = {
   bishop: "BI",
   knight: "KN",
   pawn: "PO",
+  raptor: "RA",
+  crow: "CR",
+  demon: "DM",
 };
 const at = (s: Match, p: Pos) => (inside(p) ? s.board[idx(p)] : null);
 const eq = (a: Pos, b: Pos) => a.row === b.row && a.col === b.col;
@@ -55,6 +58,7 @@ export function createMatch(
         role: custom ? "custom" : role,
         definitionId: custom || undefined,
         moved: false,
+        zeroTurns: custom && defs.find((definition) => definition.id === custom)?.zeroBody ? 3 : undefined,
       };
       board[idx({ row: pr, col })] = {
         id: `p${id++}`,
@@ -62,12 +66,19 @@ export function createMatch(
         role: pawnCustom ? "custom" : "pawn",
         definitionId: pawnCustom || undefined,
         moved: false,
+        zeroTurns: pawnCustom && defs.find((definition) => definition.id === pawnCustom)?.zeroBody ? 3 : undefined,
       };
     });
   }
   const crowns = formation.filter(
     (id) => defs.find((definition) => definition.id === id)?.isCrown,
   ).length;
+  // 零体は配置時点から3回の所有者手番終了を寿命として持つ。
+  for (let i = 0; i < board.length; i++) {
+    const piece = board[i];
+    if (piece?.role === "custom" && defs.find((definition) => definition.id === piece.definitionId)?.zeroBody)
+      board[i] = { ...piece, zeroTurns: 3 };
+  }
   return {
     board,
     turn: "white",
@@ -79,6 +90,7 @@ export function createMatch(
     winner: null,
     draw: false,
     message: "白の手番です。",
+    ply: 0,
     stats: {
       white: { captures: 0, losses: 0, evolutions: 0, kingDepth: 8 },
       black: { captures: 0, losses: 0, evolutions: 0, kingDepth: 8 },
@@ -94,33 +106,64 @@ function rays(
   jumpAllies = 0,
   jumpEnemies = 0,
   usage: Usage = "both",
+  options: { passEnemies?: number; passCapture?: "first" | "last"; charge?: boolean; isBarrier?: (piece: Piece) => boolean } = {},
 ) {
   const out: Move[] = [];
   for (const v of vectors) {
-    let alliesPassed = 0,
-      enemiesPassed = 0;
+    let alliesPassed = 0, enemiesPassed = 0;
+    const passedEnemies: Pos[] = [];
     for (let n = 1; n <= max; n++) {
       const to = { row: from.row + v.dy * n, col: from.col + v.dx * n };
       if (!inside(to)) break;
       const t = at(s, to);
       if (!t) {
-        if (usage !== "capture" && usage !== "stationary")
-          out.push({ from, to });
+        if (usage !== "capture" && usage !== "stationary") out.push({ from, to });
+        // すり抜け捕獲は、通過した敵より先の空きマスへ着地する別アクション。
+        // usageに関係なく、すり抜け能力そのものが対象1体への捕獲権を与える。
+        if (passedEnemies.length) {
+          const captureAt = options.passCapture === "last" ? passedEnemies[passedEnemies.length - 1] : passedEnemies[0];
+          out.push({ from, to, passCaptureAt: captureAt });
+        }
       } else {
-        if (t.color !== color && usage !== "move")
-          out.push({ from, to, stationary: usage === "stationary" });
+        if (t.color !== color && options.isBarrier?.(t)) {
+          if (usage !== "move") out.push({ from, to, stationary: usage === "stationary" });
+          break;
+        }
         if (t.color === color) {
           alliesPassed++;
           if (alliesPassed > jumpAllies) break;
-        } else {
-          enemiesPassed++;
-          if (enemiesPassed > jumpEnemies) break;
+          continue;
         }
+        if (options.passEnemies) {
+          // すり抜け設定方向では敵駒のマスへ着地する通常捕獲は行わない。
+          // 指定数までは通過し、捕獲する場合も通過後の空きマスへ着地する。
+          if (enemiesPassed < options.passEnemies) {
+            enemiesPassed++;
+            passedEnemies.push(to);
+            continue;
+          }
+          break;
+        }
+        if (usage !== "move") out.push({ from, to, stationary: usage === "stationary" });
+        enemiesPassed++;
+        if (enemiesPassed > jumpEnemies) break;
+      }
+    }
+    if (options.charge) {
+      const own = out.filter((move) => {
+        const delta = { dx: Math.sign(move.to.col - from.col), dy: Math.sign(move.to.row - from.row) };
+        return delta.dx === v.dx && delta.dy === v.dy;
+      });
+      if (own.length > 1) {
+        const distance = (move: Move) => Math.max(Math.abs(move.to.row - from.row), Math.abs(move.to.col - from.col));
+        const maxDistance = Math.max(...own.map(distance));
+        for (const move of [...own]) if (distance(move) !== maxDistance) out.splice(out.indexOf(move), 1);
       }
     }
   }
   return out;
 }
+
 function cannonRays(
   s: Match,
   from: Pos,
@@ -224,6 +267,9 @@ function standard(s: Match, from: Pos, p: Piece): Move[] {
     }
     return m;
   }
+  if (p.role === "raptor") return rays(s, from, p.color, [{ dx: -2, dy: -2 }, { dx: 0, dy: -2 }, { dx: 2, dy: -2 }, { dx: -1, dy: -1 }, { dx: 1, dy: -1 }, { dx: -2, dy: 0 }, { dx: 2, dy: 0 }, { dx: -1, dy: 1 }, { dx: 1, dy: 1 }, { dx: -2, dy: 2 }, { dx: 0, dy: 2 }, { dx: 2, dy: 2 }], 1, 2, 2);
+  if (p.role === "crow") return rays(s, from, p.color, directions, 3);
+  if (p.role === "demon") return rays(s, from, p.color, directions, 1);
   return [];
 }
 export function pseudo(
@@ -235,7 +281,31 @@ export function pseudo(
 ) {
   const p = at(s, from);
   if (!p) return [];
-  if (p.role !== "custom") return standard(s, from, p);
+  if (p.role !== "custom") {
+    const base = standard(s, from, p);
+    if (p.role !== "raptor") return base;
+    const ownerIndex = s.board.findIndex((piece) => piece?.id === p.eagleOwnerId);
+    if (ownerIndex < 0) return base;
+    const ownerPos = { row: Math.floor(ownerIndex / 8), col: ownerIndex % 8 };
+    const training = p.eagleTraining ?? "coordination";
+    const special: Move[] = [];
+    if (training === "coordination" || training === "support") special.push({ from, to: ownerPos, swap: "local" });
+    if (training === "hunting" || training === "support") {
+      const targets = [
+        { dx: 0, dy: -2 }, { dx: 0, dy: -1 }, { dx: 0, dy: 1 }, { dx: 0, dy: 2 },
+        { dx: -2, dy: 0 }, { dx: -1, dy: 0 }, { dx: 1, dy: 0 }, { dx: 2, dy: 0 },
+        { dx: -1, dy: -1 }, { dx: 1, dy: -1 }, { dx: -1, dy: 1 }, { dx: 1, dy: 1 },
+      ];
+      for (const v of targets) {
+        const to = { row: ownerPos.row + v.dy, col: ownerPos.col + v.dx };
+        const target = inside(to) ? at(s, to) : null;
+        if (!target || target.color === p.color) continue;
+        if (training === "support" && ((to.row + to.col) & 1) !== ((from.row + from.col) & 1)) continue;
+        special.push(training === "support" ? { from, to, stationary: true } : { from, to });
+      }
+    }
+    return [...base, ...special];
+  }
   const source = defs.find((x) => x.id === p.definitionId);
   if (!source) return [];
   const growthStage = p.growthStage ?? (p.evolved ? 1 : 0);
@@ -243,16 +313,19 @@ export function pseudo(
     (source.growth && growthStage > 0) ||
     (source.transformation && p.evolved)
   );
-  const d = p.summoned
+  let d = p.summoned
     ? summonedDefinition(source)
     : source.growth && growthStage > 0
       ? evolvedDefinition(source, growthStage)
       : p.evolved && source.transformation
         ? transformedDefinition(source)
         : source;
+  if (p.rebirthEnhanced) d = rebirthEnhancedDefinition(source, d);
   const out: Move[] = [];
   for (const pattern of d.patterns) {
+    const sealed = !!p.sealedUntil && (s.ply ?? 0) <= p.sealedUntil;
     if ((pattern.phase ?? 1) !== phase) continue;
+    if (sealed && phase === 2) continue;
     if (phase === 2 && (pattern.secondTrigger ?? "normal") !== trigger) continue;
     if (pattern.evolutionOnly && !p.evolved) continue;
     if (pattern.initialOnly && p.moved) continue;
@@ -268,31 +341,62 @@ export function pseudo(
     const usage = phase === 2 && trigger === "normal" && !evolvedMovement
       ? "move"
       : pattern.usage ?? "both";
-    const additiveCannon = pattern.kind === "direction" && !!pattern.growthCannon;
-    if (pattern.kind === "direction" && pattern.cannon) {
+    const additiveCannon = !sealed && pattern.kind === "direction" && !!pattern.growthCannon;
+    if (!sealed && pattern.kind === "direction" && pattern.cannon) {
       out.push(
         ...cannonRays(s, from, p.color, v, max, usage),
       );
       continue;
     }
-    out.push(
-      ...rays(
-        s,
-        from,
-        p.color,
-        v,
-        max,
-        pattern.kind === "leap"
-          ? 2
-          : jumpLimit(pattern.jumpAllies, pattern.canJump),
-        pattern.kind === "leap"
-          ? 2
-          : jumpLimit(pattern.jumpEnemies, pattern.canJump),
-        usage,
-      ),
+    const generated = rays(
+      s,
+      from,
+      p.color,
+      v,
+      max,
+      pattern.kind === "leap"
+        ? 2
+        : sealed ? 0 : source.zeroBody ? 2 : jumpLimit(pattern.jumpAllies, pattern.canJump),
+      pattern.kind === "leap"
+        ? 2
+        : sealed ? 0 : source.zeroBody ? 2 : jumpLimit(pattern.jumpEnemies, pattern.canJump),
+      usage,
+      {
+        passEnemies: sealed || pattern.kind === "leap" ? 0 : pattern.passEnemies,
+        passCapture: pattern.kind === "direction" ? pattern.passCapture : undefined,
+        charge: !sealed && pattern.kind === "direction" && !!pattern.charge,
+        isBarrier: pattern.kind === "direction"
+          ? (piece) => piece.role === "custom" && !!defs.find((item) => item.id === piece.definitionId)?.barrier && !(piece.sealedUntil && (s.ply ?? 0) <= piece.sealedUntil)
+          : undefined,
+      },
     );
+
+    if (!sealed && pattern.kind === "direction" && pattern.recoil) {
+      for (const move of generated) {
+        if (!at(s, move.to) || move.stationary) continue;
+        const dx = Math.sign(move.to.col - from.col), dy = Math.sign(move.to.row - from.row);
+        const recoilTo = { row: move.to.row - dy, col: move.to.col - dx };
+        // 出発地点は捕獲移動後には空くため、有効な反動先として扱う。
+        if (!eq(recoilTo, from) && at(s, recoilTo)) continue;
+        move.recoilTo = recoilTo;
+      }
+      out.push(...generated.filter((move) => !at(s, move.to) || !!move.recoilTo));
+    } else out.push(...generated);
     if (additiveCannon)
       out.push(...cannonRays(s, from, p.color, v, max, "capture"));
+  }
+  // 追跡成立後は元の固定跳躍範囲に関係なく、その追跡対象だけを直接捕獲できる。
+  // Royal は監視・追跡対象外で、途中でRoyal化した場合もここで除外する。
+  const sealedNow = !!p.sealedUntil && (s.ply ?? 0) <= p.sealedUntil;
+  if (!sealedNow) {
+    for (const tracked of s.trackingTargets ?? []) {
+      if (tracked.trackerId !== p.id || tracked.remaining <= 0) continue;
+      const targetIndex = s.board.findIndex((piece) => piece?.id === tracked.targetId);
+      if (targetIndex < 0) continue;
+      const target = s.board[targetIndex]!;
+      if (target.color === p.color || isRoyal(target, defs)) continue;
+      out.push({ from, to: { row: Math.floor(targetIndex / 8), col: targetIndex % 8 } });
+    }
   }
   return [
     ...new Map(
@@ -321,7 +425,7 @@ export const threatened = (s: Match, target: Pos, by: Color, d: Definition[]): b
       { ...s, preset: "royal-any", turn: by, winner: null, draw: false },
       from,
       d,
-    ).some((move) => eq(move.next?.to ?? move.to, target));
+    ).some((move) => eq(move.passCaptureAt ?? move.next?.passCaptureAt ?? move.next?.to ?? move.to, target));
   });
 
 export interface RangeMark {
@@ -354,7 +458,7 @@ function captureSquares(
         moved: true,
       };
       const move = pseudo({ ...s, board }, from, d, phase).find((candidate) =>
-        eq(candidate.to, to),
+        eq(candidate.passCaptureAt ?? candidate.to, to),
       );
       if (move) targets.push({ to, stationary: !!move.stationary });
     }
@@ -395,7 +499,7 @@ export function inspectRange(s: Match, from: Pos, d: Definition[]) {
   for (const firstMove of first) {
     const afterFirst = raw(s, firstMove);
     const secondFrom = firstMove.stationary ? from : firstMove.to;
-    const capturedFirst = !!at(s, firstMove.to);
+    const capturedFirst = !!firstMove.passCaptureAt || !!at(s, firstMove.to);
     pseudo(afterFirst, secondFrom, d, 2, capturedFirst ? "after-capture" : "normal").forEach((move) => {
       if (!at(afterFirst, move.to)) add(move.to, { move: true, second: true });
     });
@@ -429,8 +533,11 @@ function raw(s: Match, m: Move) {
     return { ...s, board: b };
   }
   if (m.enPassant) b[idx({ row: m.from.row, col: m.to.col })] = null;
+  if (m.passCaptureAt) b[idx(m.passCaptureAt)] = null;
   b[idx(m.from)] = null;
-  b[idx(m.to)] = { ...p, role: m.promotion ? "queen" : p.role, moved: true, evolvedMoved: p.evolved ? true : p.evolvedMoved };
+  const landing = m.recoilTo ?? m.to;
+  b[idx(m.to)] = null;
+  b[idx(landing)] = { ...p, role: m.promotion ? "queen" : p.role, moved: true, evolvedMoved: p.evolved ? true : p.evolvedMoved };
   if (m.castle) {
     const f = { row: m.from.row, col: m.castle === "king" ? 7 : 0 },
       t = { row: m.from.row, col: m.castle === "king" ? 5 : 3 },
@@ -443,7 +550,17 @@ function raw(s: Match, m: Move) {
 export function legal(s: Match, from: Pos, d: Definition[]): Move[] {
   const p = at(s, from);
   if (!p || p.color !== s.turn || s.winner || s.draw) return [];
-  const first = pseudo(s, from, d);
+  const first = pseudo(s, from, d).filter((move) => {
+    const target = at(s, move.passCaptureAt ?? move.to);
+    const definition = target?.role === "custom" ? d.find((item) => item.id === target.definitionId) : undefined;
+    if (target && definition?.deathbind && target.evolved && !(target.sealedUntil && (s.ply ?? 0) <= target.sealedUntil) && isRoyal(p, d)) return false;
+    if (target && definition?.dark && target.evolved && !(target.sealedUntil && (s.ply ?? 0) <= target.sealedUntil)) {
+      const capturePos = move.passCaptureAt ?? move.to;
+      const distance = Math.max(Math.abs(capturePos.row - from.row), Math.abs(capturePos.col - from.col));
+      if (move.stationary || distance >= 3) return false;
+    }
+    return true;
+  });
   const base: Move[] =
     s.preset !== "classic"
       ? first
@@ -466,15 +583,34 @@ export function legal(s: Match, from: Pos, d: Definition[]): Move[] {
             k = king(n, p.color);
           return !!k && !threatened(n, k, other(p.color), d);
         });
+  if (p.role === "demon") {
+    const combined: Move[] = [...base];
+    for (const firstMove of base) {
+      const capturedFirst = !!at(s, firstMove.to);
+      const afterFirst = raw(s, firstMove);
+      for (const secondMove of standard(afterFirst, firstMove.to, at(afterFirst, firstMove.to)!)) {
+        if (capturedFirst && at(afterFirst, secondMove.to)) continue;
+        const afterSecond = raw(afterFirst, secondMove);
+        if (s.preset === "classic") {
+          const k = king(afterSecond, p.color);
+          if (!k || threatened(afterSecond, k, other(p.color), d)) continue;
+        }
+        combined.push({ ...firstMove, next: secondMove });
+      }
+    }
+    return combined;
+  }
   if (p.role !== "custom") return base;
   const definition = d.find((item) => item.id === p.definitionId);
   if (!definition) return base;
   const growthStage = p.growthStage ?? (p.evolved ? 1 : 0);
-  const activeDefinition = definition.growth && growthStage
+  let activeDefinition = definition.growth && growthStage
     ? evolvedDefinition(definition, growthStage)
     : p.evolved && definition.transformation ? transformedDefinition(definition) : definition;
+  if (p.rebirthEnhanced) activeDefinition = rebirthEnhancedDefinition(definition, activeDefinition);
   const combined: Move[] = [...base];
-  if (p.evolved) {
+  const pieceSealed = !!p.sealedUntil && (s.ply ?? 0) <= p.sealedUntil;
+  if (p.evolved && !pieceSealed) {
     const evolution = definition.growth
       ? growthStages(definition.growth)[growthStage - 1]
       : definition.transformation;
@@ -499,11 +635,30 @@ export function legal(s: Match, from: Pos, d: Definition[]): Move[] {
       return !!royal && !threatened(after, royal, other(p.color), d);
     }));
   }
+  // 献身用の攻撃判定。legal()->献身->threatened()->legal() の再帰を避けるため、
+  // ここでは相手の一次移動による捕獲到達だけを見る。
+  const directlyThreatened = (state: Match, targetPos: Pos, by: Color) =>
+    state.board.some((attacker, index) => {
+      if (attacker?.color !== by) return false;
+      const attackerFrom = { row: Math.floor(index / 8), col: index % 8 };
+      return pseudo(state, attackerFrom, d).some((candidate) => eq(candidate.passCaptureAt ?? candidate.to, targetPos));
+    });
+  // 献身: 成長/変身後、チェック中の味方Royalと位置交換し、そのチェックを解除する。
+  if (definition.devotion && p.evolved && !pieceSealed) {
+    s.board.forEach((target, index) => {
+      if (!target || target.color !== p.color || target.id === p.id || !isRoyal(target, d)) return;
+      const to = { row: Math.floor(index / 8), col: index % 8 };
+      if (!directlyThreatened(s, to, other(p.color))) return;
+      const move: Move = { from, to, swap: "devotion" };
+      const after = raw(s, move);
+      if (!directlyThreatened(after, from, other(p.color))) combined.push(move);
+    });
+  }
   if (!activeDefinition.patterns.some((pattern) => pattern.phase === 2)) return combined;
   for (const firstMove of base) {
     const afterFirst = raw(s, firstMove);
     const secondFrom = firstMove.stationary ? from : firstMove.to;
-    const capturedFirst = !!at(s, firstMove.to);
+    const capturedFirst = !!firstMove.passCaptureAt || !!at(s, firstMove.to);
     const secondMoves = capturedFirst
       ? pseudo(afterFirst, secondFrom, d, 2, "after-capture")
       : pseudo(afterFirst, secondFrom, d, 2, "normal");
@@ -584,6 +739,13 @@ function conditionMet(
     condition.center === "self" ? position : king(match, piece.color);
   return !!center && nearbyEnemyCount(match, center, piece.color, condition.radius) >= condition.threshold;
 }
+function rebirthEnhancementActive(piece: Piece, definition: Definition) {
+  const at = definition.rebirth?.enhancedAt;
+  if (!definition.rebirth?.enhancement || definition.rebirth.enhancedPattern === undefined || !at) return false;
+  if (at === "transformation") return !!piece.evolved && !!definition.transformation;
+  return (piece.growthStage ?? (piece.evolved ? 1 : 0)) >= at;
+}
+
 function applyGrowth(match: Match, definitions: Definition[], statsSnapshot: ReturnType<typeof defaultStats>) {
   const board = [...match.board],
     evolved = { white: 0, black: 0 };
@@ -603,6 +765,7 @@ function applyGrowth(match: Match, definitions: Definition[], statsSnapshot: Ret
         growthStage: stage as 1 | 2,
         evolvedMoved: false,
         globalSwapUsed: false,
+        zeroTurns: stages[stage - 1]?.overcomeZero ? undefined : piece.zeroTurns === undefined ? undefined : piece.zeroTurns + (stages[stage - 1]?.zeroRecovery ?? 0),
       };
       evolved[piece.color] += stage - before;
       return;
@@ -637,6 +800,60 @@ function applyGrowth(match: Match, definitions: Definition[], statsSnapshot: Ret
     targets[color] += newCrowns;
   }
   let result: Match = { ...match, board, stats, targets };
+  // 契約系能力: 新たに成長/変身した契約者について、配置可能性を確認して選択待ちにする。
+  const contractIndex = board.findIndex((piece, i) => {
+    const before = match.board[i];
+    if (!piece || !before || piece.role !== "custom") return false;
+    const definition = definitions.find((item) => item.id === piece.definitionId);
+    if (!definition) return false;
+    const beforeStage = before.growthStage ?? (before.evolved ? 1 : 0);
+    const afterStage = piece.growthStage ?? (piece.evolved ? 1 : 0);
+    const eagle = definition.growth
+      ? growthStages(definition.growth).slice(beforeStage, afterStage).some((stage) => stage.eagleHunt)
+      : !before.evolved && piece.evolved && !!definition.transformation && !!definition.eagleHunt;
+    const demon = definition.growth
+      ? growthStages(definition.growth).slice(beforeStage, afterStage).some((stage) => stage.demonContract)
+      : !before.evolved && piece.evolved && !!definition.transformation && !!definition.demonContract;
+    return (eagle && !piece.eagleHuntUsed) || (demon && !piece.demonContractUsed);
+  });
+  if (contractIndex >= 0) {
+    const piece = board[contractIndex]!, before = match.board[contractIndex]!, definition = definitions.find((item) => item.id === piece.definitionId)!;
+    const origin = { row: Math.floor(contractIndex / 8), col: contractIndex % 8 };
+    const beforeStage = before.growthStage ?? (before.evolved ? 1 : 0), afterStage = piece.growthStage ?? (piece.evolved ? 1 : 0);
+    const eagle = definition.growth
+      ? growthStages(definition.growth).slice(beforeStage, afterStage).some((stage) => stage.eagleHunt)
+      : !!definition.transformation && !!definition.eagleHunt;
+    const demon = definition.growth
+      ? growthStages(definition.growth).slice(beforeStage, afterStage).some((stage) => stage.demonContract)
+      : !!definition.transformation && !!definition.demonContract;
+    const triggerEagle = eagle && !piece.eagleHuntUsed;
+    const triggerDemon = demon && !piece.demonContractUsed;
+    if (triggerEagle) {
+      const raptorCandidates = directions.map((v) => ({ row: origin.row + v.dy, col: origin.col + v.dx })).filter((pos) => inside(pos) && !at(result, pos));
+      const enemy = other(piece.color);
+      const crowCandidates: Pos[] = [];
+      for (let row = 0; row < 8; row++) for (let col = 0; col < 8; col++) {
+        const inCamp = enemy === "white" ? row >= 5 : row <= 2;
+        const pos = { row, col };
+        if (inCamp && !at(result, pos)) crowCandidates.push(pos);
+      }
+      const safeRaptorCandidates = raptorCandidates.filter((candidate) => crowCandidates.some((crow) => !eq(crow, candidate)));
+      if (safeRaptorCandidates.length && crowCandidates.length) {
+        result.board[contractIndex] = { ...piece, eagleHuntUsed: true };
+        result.pendingContract = { kind: "raptor", owner: piece.color, contractorId: piece.id, training: definition.eagleTraining ?? "coordination", origin, candidates: safeRaptorCandidates, nextCandidates: crowCandidates, followupDemon: triggerDemon };
+        return result;
+      }
+      result.board[contractIndex] = { ...piece, eagleHuntUsed: true };
+    }
+    if (triggerDemon) {
+      const candidates = directions.map((v) => ({ row: origin.row + v.dy, col: origin.col + v.dx })).filter((pos) => inside(pos) && !at(result, pos));
+      result.board[contractIndex] = { ...piece, demonContractUsed: true };
+      if (candidates.length) {
+        result.pendingContract = { kind: "demon-own", owner: piece.color, contractorId: piece.id, origin, candidates };
+        return result;
+      }
+    }
+  }
   const index = board.findIndex((piece, i) => {
     const before = match.board[i], definition = definitions.find((item) => item.id === piece?.definitionId);
     return !!piece && !before?.evolved && !!piece.evolved && !!definition?.summoning && definition.summoning.timing !== "inherit";
@@ -644,7 +861,21 @@ function applyGrowth(match: Match, definitions: Definition[], statsSnapshot: Ret
   if (index >= 0) {
     const piece = board[index]!, definition = definitions.find((item) => item.id === piece.definitionId)!, summon = definition.summoning!;
     const origin = { row: Math.floor(index / 8), col: index % 8 };
-    if (summon.timing === "split") result.board[index] = null;
+    if (summon.timing === "split") {
+      result.board[index] = null;
+      if (definition.rebirth?.splitAllowed && !piece.rebirthUsed) {
+        const rebirthCandidates = directions
+          .map((v) => ({ row: origin.row + v.dy, col: origin.col + v.dx }))
+          .filter((pos) => inside(pos) && !at(result, pos));
+        if (rebirthCandidates.length)
+          result.pendingRebirth = {
+            owner: piece.color,
+            piece: { ...piece, rebirthUsed: true, rebirthPending: true, rebirthEnhanced: rebirthEnhancementActive(piece, definition) },
+            origin,
+            candidates: rebirthCandidates,
+          };
+      }
+    }
     let candidates = summon.range === "movement" && summon.timing === "summon"
       ? pseudo(result, origin, definitions).filter((move) => !at(result, move.to)).map((move) => move.to)
       : directions.map((v) => ({ row: origin.row + v.dy, col: origin.col + v.dx })).filter((pos) => inside(pos) && !at(result, pos));
@@ -653,23 +884,77 @@ function applyGrowth(match: Match, definitions: Definition[], statsSnapshot: Ret
   }
   return result;
 }
+export function placeContract(s: Match, to: Pos): Match {
+  const pending = s.pendingContract;
+  if (!pending || !pending.candidates.some((pos) => eq(pos, to)) || at(s, to)) return s;
+  const board = [...s.board];
+  if (pending.kind === "raptor") {
+    const name = ["鷲", "鷹", "隼"][Math.floor(Math.random() * 3)];
+    const id = `raptor-${Date.now()}`;
+    board[idx(to)] = { id, color: pending.owner, role: "raptor", moved: false, eagleOwnerId: pending.contractorId, eagleTraining: pending.training, contractName: name };
+    const ownerIndex = board.findIndex((piece) => piece?.id === pending.contractorId);
+    if (ownerIndex >= 0) board[ownerIndex] = { ...board[ownerIndex]!, raptorId: id };
+    return { ...s, board, pendingContract: { kind: "crow", owner: other(pending.owner), contractorId: pending.contractorId, origin: pending.origin, candidates: (pending.nextCandidates ?? []).filter((pos) => !at({ ...s, board }, pos)), followupDemon: pending.followupDemon } };
+  }
+  if (pending.kind === "crow") {
+    board[idx(to)] = { id: `crow-${Date.now()}`, color: pending.owner, role: "crow", moved: false, contractName: "鴉" };
+    if (pending.followupDemon && pending.contractorId) {
+      const ownerIndex = board.findIndex((piece) => piece?.id === pending.contractorId);
+      if (ownerIndex >= 0) {
+        const origin = { row: Math.floor(ownerIndex / 8), col: ownerIndex % 8 };
+        const candidates = directions.map((v) => ({ row: origin.row + v.dy, col: origin.col + v.dx })).filter((pos) => inside(pos) && !at({ ...s, board }, pos));
+        board[ownerIndex] = { ...board[ownerIndex]!, demonContractUsed: true };
+        if (candidates.length) return { ...s, board, pendingContract: { kind: "demon-own", owner: board[ownerIndex]!.color, contractorId: pending.contractorId, origin, candidates } };
+      }
+    }
+  } else board[idx(to)] = { id: `demon-${Date.now()}`, color: pending.owner, role: "demon", moved: false, contractName: "魔神", demonTurns: pending.kind === "demon-own" ? 4 : undefined, demonCompensation: pending.kind === "demon-own" };
+  return { ...s, board, pendingContract: undefined };
+}
+
 export function placeSummon(s: Match, to: Pos): Match {
   const pending = s.pendingSummon;
   if (!pending || !pending.candidates.some((pos) => eq(pos, to)) || at(s, to)) return s;
   const board = [...s.board];
   board[idx(to)] = { id: `summon-${Date.now()}-${pending.remaining}`, color: pending.owner, role: "custom", definitionId: pending.definitionId, moved: false, summoned: true };
   const candidates = pending.candidates.filter((pos) => !eq(pos, to) && !at({ ...s, board }, pos));
-  return { ...s, board, pendingSummon: pending.remaining > 1 && candidates.length ? { ...pending, remaining: pending.remaining - 1, candidates } : undefined };
+  const pendingSummon = pending.remaining > 1 && candidates.length ? { ...pending, remaining: pending.remaining - 1, candidates } : undefined;
+  let pendingRebirth = s.pendingRebirth;
+  // 分裂後再生は派生駒の配置完了後の盤面で候補を作り直す。
+  // 古い候補が派生駒で埋まると配置不能の pendingRebirth が残り、対局が停止していた。
+  if (!pendingSummon && pendingRebirth) {
+    const rebirthCandidates = directions
+      .map((v) => ({ row: pendingRebirth!.origin.row + v.dy, col: pendingRebirth!.origin.col + v.dx }))
+      .filter((pos) => inside(pos) && !at({ ...s, board }, pos));
+    pendingRebirth = rebirthCandidates.length ? { ...pendingRebirth, candidates: rebirthCandidates } : undefined;
+  }
+  return { ...s, board, pendingSummon, pendingRebirth };
+}
+export function placeRebirth(s: Match, to: Pos): Match {
+  const pending = s.pendingRebirth;
+  if (!pending || !pending.candidates.some((pos) => eq(pos, to)) || at(s, to)) return s;
+  const board = [...s.board];
+  const piece = pending.piece;
+  board[idx(to)] = { ...piece, moved: true, rebirthUsed: true, rebirthPending: false };
+  return { ...s, board, pendingRebirth: undefined, message: `${pending.owner === "white" ? "白" : "黒"}の駒が再生しました。` };
 }
 export function play(s: Match, m: Move, d: Definition[]) {
   const p = at(s, m.from)!,
-    captures = [m.swap || m.transit ? null : at(s, m.to), m.next ? at(raw(s, m), m.next.to) : null].filter(
+    captures = [m.passCaptureAt ? at(s, m.passCaptureAt) : (m.swap || m.transit ? null : at(s, m.to)), m.next ? at(raw(s, m), m.next.passCaptureAt ?? m.next.to) : null].filter(
       Boolean,
     ) as Piece[],
     enemy = other(p.color),
     royalCaptures = captures.filter((cap) => isRoyal(cap, d));
   let n = raw(s, m);
   if (m.next) n = raw(n, m.next);
+  // 道連れは捕獲した側も同時に除去する（王冠は捕獲できない）。
+  const deathbound = captures.some((capture) => {
+    const definition = capture.role === "custom" ? d.find((item) => item.id === capture.definitionId) : undefined;
+    return !!definition?.deathbind && capture.evolved && !(capture.sealedUntil && (s.ply ?? 0) <= capture.sealedUntil);
+  });
+  if (deathbound) {
+    const moving = n.board.findIndex((piece) => piece?.id === p.id);
+    if (moving >= 0) n.board[moving] = null;
+  }
   const stats = structuredClone(s.stats ?? defaultStats()),
     capturedCount = captures.length;
   stats[p.color].captures += capturedCount;
@@ -694,6 +979,39 @@ export function play(s: Match, m: Move, d: Definition[]) {
     if (p.role === "king") stats[p.color].kingDepth = Math.min(stats[p.color].kingDepth, reached);
   }
   n = { ...n, stats };
+  // 封印は捕獲地点を中心に3×3、相手の次の手番終了まで継続する。
+  const moverDefinition = p.role === "custom" ? d.find((item) => item.id === p.definitionId) : undefined;
+  if (capturedCount && moverDefinition?.seal && p.evolved && !(p.sealedUntil && (s.ply ?? 0) <= p.sealedUntil)) {
+    const center = m.next?.passCaptureAt ?? m.next?.to ?? m.passCaptureAt ?? m.to;
+    n.board = n.board.map((piece, index) => {
+      if (!piece || piece.color === p.color) return piece;
+      const pos = { row: Math.floor(index / 8), col: index % 8 };
+      return Math.max(Math.abs(pos.row - center.row), Math.abs(pos.col - center.col)) <= 1
+        ? { ...piece, sealedUntil: (s.ply ?? 0) + 2 }
+        : piece;
+    });
+  }
+  // 再生は取られた直後に予約し、次の自分の手番で周囲から配置する。
+  const reborn = captures.find((capture) => {
+    const definition = capture.role === "custom" ? d.find((item) => item.id === capture.definitionId) : undefined;
+    return !!definition?.rebirth && !capture.rebirthUsed && !definition?.zeroBody && !definition?.deathbind && !(capture.sealedUntil && (s.ply ?? 0) <= capture.sealedUntil);
+  });
+  if (reborn) {
+    const definition = d.find((item) => item.id === reborn.definitionId)!;
+    const origin = m.next?.passCaptureAt ?? m.next?.to ?? m.passCaptureAt ?? m.to;
+    const candidates = directions.map((v) => ({ row: origin.row + v.dy, col: origin.col + v.dx })).filter((pos) => inside(pos) && !at(n, pos));
+    if (candidates.length) n.pendingRebirth = { owner: reborn.color, piece: { ...reborn, rebirthUsed: true, rebirthEnhanced: rebirthEnhancementActive(reborn, definition) }, origin, candidates };
+  }
+  const deadDemon = captures.find((capture) => capture.role === "demon" && capture.demonCompensation);
+  if (deadDemon) {
+    const deathPos = m.next?.passCaptureAt ?? m.next?.to ?? m.passCaptureAt ?? m.to;
+    const candidates: Pos[] = [];
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const pos = { row: deathPos.row + dy, col: deathPos.col + dx };
+      if (inside(pos) && !at(n, pos)) candidates.push(pos);
+    }
+    if (candidates.length) n.pendingContract = { kind: "demon-foe", owner: other(deadDemon.color), origin: deathPos, candidates };
+  }
   if (royalCaptures.length)
     n.lost = { ...n.lost, [enemy]: n.lost[enemy] + royalCaptures.length };
   const statsSnapshot = structuredClone(stats);
@@ -712,6 +1030,8 @@ export function play(s: Match, m: Move, d: Definition[]) {
   n = {
     ...n,
     turn: enemy,
+    ply: (s.ply ?? 0) + 1,
+    lastMovedPieceId: p.id,
     enPassant:
       !m.next &&
       !m.stationary &&
@@ -728,11 +1048,116 @@ export function play(s: Match, m: Move, d: Definition[]) {
       ? `${p.color === "white" ? "白" : "黒"}の勝利です。`
       : `${enemy === "white" ? "白" : "黒"}の手番です。`,
   };
+  // 再生予約は「次の自分の手番開始時」に実行する。相手の手で候補マスが
+  // 埋まる可能性があるため、所有者へ手番が戻った時点の盤面で候補を更新する。
+  if (n.pendingRebirth && n.pendingRebirth.owner === n.turn) {
+    const pending = n.pendingRebirth;
+    const candidates = directions
+      .map((v) => ({ row: pending.origin.row + v.dy, col: pending.origin.col + v.dx }))
+      .filter((pos) => inside(pos) && !at(n, pos));
+    n.pendingRebirth = candidates.length ? { ...pending, candidates } : undefined;
+  }
+  // 追跡状態更新。
+  // 1) 手番を終えた側の既存追跡期限を1手消費する。
+  n.trackingTargets = (n.trackingTargets ?? [])
+    .map((item) => {
+      const tracker = n.board.find((piece) => piece?.id === item.trackerId);
+      if (!tracker || tracker.color !== p.color) return item;
+      return { ...item, remaining: (item.remaining - 1) as 0 | 1 };
+    })
+    .filter((item) => item.remaining > 0 && n.board.some((piece) => piece?.id === item.trackerId) && n.board.some((piece) => piece?.id === item.targetId));
+
+  // 2) 今終了した手番の相手が前手番終了時に監視した敵について、
+  //    固定跳躍射程外へ逃げ、かつ追跡者から3マス以内なら追跡成立。
+  const remainingWatches = [];
+  const newTargets = [...(n.trackingTargets ?? [])];
+  for (const watch of n.trackingWatches ?? []) {
+    const trackerIndex = n.board.findIndex((piece) => piece?.id === watch.trackerId);
+    const targetIndex = n.board.findIndex((piece) => piece?.id === watch.targetId);
+    if (trackerIndex < 0 || targetIndex < 0) continue;
+    const tracker = n.board[trackerIndex]!, target = n.board[targetIndex]!;
+    if (tracker.color === p.color) continue; // 自分側の古い監視はこの後作り直す。
+    if (isRoyal(target, d)) continue;
+    const trackerPos = { row: Math.floor(trackerIndex / 8), col: trackerIndex % 8 };
+    const targetPos = { row: Math.floor(targetIndex / 8), col: targetIndex % 8 };
+    const definition = tracker.role === "custom" ? d.find((item) => item.id === tracker.definitionId) : undefined;
+    if (!definition) continue;
+    const stage = tracker.growthStage ?? (tracker.evolved ? 1 : 0);
+    let active = definition.growth && stage > 0 ? evolvedDefinition(definition, stage) : tracker.evolved && definition.transformation ? transformedDefinition(definition) : definition;
+    if (tracker.rebirthEnhanced) active = rebirthEnhancedDefinition(definition, active);
+    const pattern = active.patterns[watch.patternIndex];
+    if (!pattern || pattern.kind !== "leap" || !pattern.tracking) continue;
+    const sign = tracker.color === "white" ? 1 : -1;
+    const stillInRange = pattern.vectors.some((vector) => targetPos.col === trackerPos.col + vector.dx && targetPos.row === trackerPos.row + vector.dy * sign);
+    const distance = Math.max(Math.abs(targetPos.row - trackerPos.row), Math.abs(targetPos.col - trackerPos.col));
+    if (!stillInRange && distance <= 3) {
+      const existing = newTargets.find((item) => item.trackerId === tracker.id && item.targetId === target.id);
+      if (existing) existing.remaining = Math.max(existing.remaining, watch.duration) as 1 | 2;
+      else newTargets.push({ trackerId: tracker.id, targetId: target.id, remaining: watch.duration });
+    }
+  }
+  n.trackingTargets = newTargets;
+
+  // 3) 手番を終えた側は監視をリセットし、現在の追跡Leap射程内の非Royal敵を新たに監視する。
+  n.trackingWatches = remainingWatches;
+  for (let trackerIndex = 0; trackerIndex < n.board.length; trackerIndex++) {
+    const tracker = n.board[trackerIndex];
+    if (!tracker || tracker.color !== p.color || tracker.role !== "custom") continue;
+    if (tracker.sealedUntil && (n.ply ?? 0) <= tracker.sealedUntil) continue;
+    const definition = d.find((item) => item.id === tracker.definitionId);
+    if (!definition) continue;
+    const stage = tracker.growthStage ?? (tracker.evolved ? 1 : 0);
+    let active = definition.growth && stage > 0 ? evolvedDefinition(definition, stage) : tracker.evolved && definition.transformation ? transformedDefinition(definition) : definition;
+    if (tracker.rebirthEnhanced) active = rebirthEnhancedDefinition(definition, active);
+    const trackerPos = { row: Math.floor(trackerIndex / 8), col: trackerIndex % 8 };
+    const sign = tracker.color === "white" ? 1 : -1;
+    active.patterns.forEach((pattern, patternIndex) => {
+      if (pattern.kind !== "leap" || !pattern.tracking) return;
+      for (const vector of pattern.vectors) {
+        const targetPos = { row: trackerPos.row + vector.dy * sign, col: trackerPos.col + vector.dx };
+        if (!inside(targetPos)) continue;
+        const target = at(n, targetPos);
+        if (!target || target.color === tracker.color || isRoyal(target, d)) continue;
+        n.trackingWatches!.push({ trackerId: tracker.id, patternIndex, targetId: target.id, duration: pattern.tracking.duration });
+      }
+    });
+  }
+
+  // 契約魔神の寿命。召喚された手番ではなく、以後の所有者手番終了ごとに減少する。
+  let expiredDemon: { pos: Pos; color: Color } | undefined;
+  n.board = n.board.map((piece, index) => {
+    if (!piece || piece.color !== p.color || piece.role !== "demon" || piece.demonTurns === undefined) return piece;
+    const value = piece.demonTurns - 1;
+    if (value > 0) return { ...piece, demonTurns: value };
+    if (piece.demonCompensation) expiredDemon = { pos: { row: Math.floor(index / 8), col: index % 8 }, color: piece.color };
+    return null;
+  });
+  if (expiredDemon) {
+    const candidates: Pos[] = [];
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const pos = { row: expiredDemon.pos.row + dy, col: expiredDemon.pos.col + dx };
+      if (inside(pos) && !at(n, pos)) candidates.push(pos);
+    }
+    if (candidates.length) n.pendingContract = { kind: "demon-foe", owner: other(expiredDemon.color), origin: expiredDemon.pos, candidates };
+  }
+
+  // 零体は「その駒を動かしたか」に関係なく、所有者の手番終了ごとに寿命が1減る。
+  n.board = n.board.map((piece) => {
+    if (!piece || piece.color !== p.color || piece.role !== "custom") return piece;
+    const definition = d.find((item) => item.id === piece.definitionId);
+    if (!definition?.zeroBody) return piece;
+    const stage = piece.growthStage ?? (piece.evolved ? 1 : 0);
+    if (definition.growth && stage > 0 && growthStages(definition.growth)[stage - 1]?.overcomeZero)
+      return { ...piece, zeroTurns: undefined };
+    // 旧対局データや盤面Editor由来でzeroTurnsが無い零体も、初期寿命3として扱う。
+    const value = (piece.zeroTurns ?? 3) - 1;
+    return value > 0 ? { ...piece, zeroTurns: value } : null;
+  });
   if (
     s.preset === "classic" && royalCaptures.some((cap) => cap.role === "custom")
   )
     return { ...n, winner: p.color, message: "王冠駒が取られました。" };
-  if (s.preset === "classic" && !n.winner && !n.pendingSummon) {
+  if (s.preset === "classic" && !n.winner && !n.pendingSummon && !n.pendingRebirth && !n.pendingContract) {
     const moves = allLegal(n, d);
     if (!moves.length) {
       const k = king(n, enemy),
@@ -742,7 +1167,7 @@ export function play(s: Match, m: Move, d: Definition[]) {
         : { ...n, draw: true, message: "ステイルメイトです。" };
     }
   }
-  if (s.preset !== "classic" && !n.winner && !n.pendingSummon && !allLegal(n, d).length)
+  if (s.preset !== "classic" && !n.winner && !n.pendingSummon && !n.pendingContract && !allLegal(n, d).length)
     n = { ...n, draw: true, message: "合法手がないため引き分けです。" };
   return n;
 }

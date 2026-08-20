@@ -3,6 +3,7 @@ import type {
   EvolutionCondition,
   Growth,
   GrowthStage,
+  GrowthUnlock,
   Pattern,
   Range,
   Usage,
@@ -29,6 +30,15 @@ export const COST = {
   cannonBase: 5,
   cannonDirection: 1,
   crown: 25,
+  dark: 8,
+  barrier: 4,
+  deathbind: 9,
+  rebirth: 8,
+  devotion: 7,
+  tracking: 5,
+  seal: 5,
+  eagleHunt: 5,
+  demonContract: 3,
   budget: 30,
 };
 const key = (v: Vec) => `${v.dx},${v.dy}`;
@@ -68,13 +78,19 @@ export function prepareDefinitionForEditing(d: Definition): Definition {
   };
 }
 export function migrateDefinition(d: Definition): Definition {
+  const legacyTracking = !!d.tracking;
   return {
     ...d,
-    patterns: d.patterns.map((pattern) =>
-      pattern.phase === 2 && (pattern.secondTrigger ?? "normal") === "normal"
+    tracking: undefined,
+    patterns: d.patterns.map((pattern) => {
+      const migrated = pattern.phase === 2 && (pattern.secondTrigger ?? "normal") === "normal"
         ? { ...pattern, usage: "move" as const }
-        : pattern,
-    ),
+        : pattern;
+      if (migrated.kind !== "leap") return migrated;
+      const oldPatternTracking = (migrated as typeof migrated & { tracking?: boolean | { duration: 1 | 2 } }).tracking;
+      if (legacyTracking || oldPatternTracking === true) return { ...migrated, tracking: { duration: 1 } };
+      return migrated;
+    }),
   };
 }
 export function normalize(d: Definition): Definition {
@@ -128,7 +144,7 @@ export function transformedDefinition(d: Definition): Definition {
 }
 export function summonedDefinition(d: Definition): Definition {
   if (!d.summoning) return d;
-  return { ...d, name: d.summoning.name, symbol: d.summoning.symbol, patterns: d.summoning.patterns, isCrown: false, growth: undefined, transformation: undefined, summoning: undefined };
+  return { ...d, name: d.summoning.name, symbol: d.summoning.symbol, patterns: d.summoning.patterns, isCrown: false, growth: undefined, transformation: undefined, summoning: undefined, rebirth: undefined };
 }
 export const SUMMON_LIMITS = {
   summon: [0, 11, 13, 15, 18],
@@ -149,6 +165,36 @@ export function growthStages(growth: Growth): GrowthStage[] {
         globalSwap: growth.globalSwap,
       }];
 }
+export function applyPatternEnhancement(d: Definition, patternIndex: number, unlock: GrowthUnlock): Definition {
+  return {
+    ...d,
+    patterns: d.patterns.flatMap((pattern, index): Pattern[] => {
+      if (index !== patternIndex) return [pattern];
+      const usage = unlock.capture ? "both" : pattern.usage;
+      const enhanced: Pattern = pattern.kind === "leap"
+        ? { ...pattern, usage, vectors: unlock.vectors ?? pattern.vectors }
+        : {
+            ...pattern,
+            range: unlock.range ?? pattern.range,
+            usage,
+            growthCannon: !!unlock.cannon,
+            cannon: pattern.cannon,
+            jumpAllies: Math.max(jumpLimit(pattern.jumpAllies, pattern.canJump), unlock.jumpAllies ?? 0) as 0 | 1 | 2,
+            jumpEnemies: Math.max(jumpLimit(pattern.jumpEnemies, pattern.canJump), unlock.jumpEnemies ?? 0) as 0 | 1 | 2,
+          };
+      return unlock.stationary
+        ? [{ ...enhanced, growthStationaryBase: true }, { ...enhanced, usage: "stationary" }]
+        : [enhanced];
+    }),
+  };
+}
+
+export function rebirthEnhancedDefinition(d: Definition, active: Definition): Definition {
+  const rebirth = d.rebirth;
+  if (rebirth?.enhancedPattern === undefined || !rebirth.enhancement) return active;
+  return applyPatternEnhancement(active, rebirth.enhancedPattern, rebirth.enhancement);
+}
+
 export function evolvedDefinition(d: Definition, requestedStage?: number): Definition {
   if (!d.growth) return d;
   const stages = growthStages(d.growth);
@@ -222,6 +268,8 @@ export function growthCost(d: Definition) {
     const difficulty = conditionDifficulty(stage.condition);
     const discount = Math.floor(gap * Math.min(0.8, difficulty * 0.2));
     let charge = Math.max(gap ? 1 : 0, gap - discount);
+    const special = (stage.zeroRecovery ?? 0) * 3 + (stage.overcomeZero ? 15 : 0) + (stage.eagleHunt ? COST.eagleHunt : 0) + (stage.demonContract ? COST.demonContract : 0);
+    charge += Math.max(0, special - Math.floor(special * Math.min(0.8, difficulty * 0.2)));
     if (stage.unlockCrown && !growthStages(d.growth!)[index - 1]?.unlockCrown)
       charge = Math.max(10, charge);
     previous = Math.max(previous, evolved);
@@ -267,6 +315,7 @@ export function cost(d: Definition) {
       if (p.phase === 2 && p.secondTrigger && p.secondTrigger !== "normal" && !p.initialOnly && !p.evolvedInitialOnly) value = Math.ceil(value / 2);
       n += value;
       if (p.phase === 2 && (!p.secondTrigger || p.secondTrigger === "normal")) n += COST.secondPhaseBase;
+      if (p.tracking) n += COST.tracking;
     } else {
       if (p.range === "slide") {
         slide = true;
@@ -305,10 +354,32 @@ export function cost(d: Definition) {
             (p.initialOnly ? Math.ceil(premium / 2) : premium);
         }
       }
+      if (p.passEnemies) {
+        const passCost = p.passEnemies === 2 && p.passCapture === "last" ? 3 : 2;
+        n += p.vectors.length * passCost;
+      }
+      if (p.charge) n -= p.vectors.length * (p.range === "slide" ? 2 : 1);
+      if (p.recoil) n += 3;
     }
   }
   const evolution = d.growth ?? d.transformation;
-  return n + (slide ? COST.slideBase : 0) + (cannon ? COST.cannonBase : 0) + (evolution?.localSwap ? 3 : 0) + (evolution?.globalSwap ? 5 : 0);
+  n += (slide ? COST.slideBase : 0) + (cannon ? COST.cannonBase : 0) + (evolution?.localSwap ? 3 : 0) + (evolution?.globalSwap ? 5 : 0);
+  n += (d.dark ? COST.dark : 0) + (d.barrier ? COST.barrier : 0) + (d.deathbind ? COST.deathbind : 0) + (d.rebirth ? COST.rebirth + (d.rebirth.splitAllowed ? 5 : 0) : 0) + (d.devotion ? COST.devotion : 0) + (d.seal ? COST.seal : 0) + (d.eagleHunt && d.transformation ? COST.eagleHunt : 0) + (d.demonContract && d.transformation ? COST.demonContract : 0);
+  if (d.rebirth?.enhancedPattern !== undefined && d.rebirth.enhancement) {
+    const at = d.rebirth.enhancedAt;
+    const active = at === "transformation"
+      ? transformedDefinition({ ...d, rebirth: undefined })
+      : at === 1 || at === 2
+        ? evolvedDefinition({ ...d, rebirth: undefined }, at)
+        : { ...d, rebirth: undefined };
+    const enhanced = applyPatternEnhancement(active, d.rebirth.enhancedPattern, d.rebirth.enhancement);
+    n += Math.max(0, cost(enhanced) - cost(active));
+  }
+  if (d.zeroBody) {
+    const jumpPremium = d.patterns.filter((p) => p.kind === "direction" && p.range !== 1).reduce((sum, p) => sum + p.vectors.length * (COST.jumpDirectionBase + 2 * COST.allyJumpPerPiece + 2 * COST.enemyJumpPerPiece), 0);
+    n = Math.max(3, Math.ceil((n + jumpPremium) * 0.6));
+  }
+  return Math.max(0, n);
 }
 function slideDirectionCost(vector: Vec, usage: Usage) {
   const full = usage === "both" || usage === "stationary";
@@ -408,6 +479,26 @@ export function errors(d: Definition, all: Definition[] = [], evolvedContext = f
     e.push("進化限定の移動設定には成長または変身が必要です。");
   if (n.patterns.some((p) => p.secondTrigger === "flight" && p.phase !== 2))
     e.push("飛翔は2回目の移動にだけ設定できます。");
+  if (n.zeroBody && (n.isCrown || n.rebirth || n.deathbind)) e.push("零体はCrown・再生・道連れと併用できません。");
+  if (n.deathbind && (n.isCrown || n.rebirth)) e.push("道連れはCrown・再生と併用できません。");
+  if (n.dark && n.isCrown) e.push("暗躍はCrown駒に設定できません。");
+  if ((n.eagleHunt || n.demonContract) && !n.growth && !n.transformation) e.push("契約能力には成長または変身が必要です。");
+  if (n.eagleHunt && n.growth && !growthStages(n.growth).some((stage) => stage.eagleHunt)) e.push("鷹狩を発動する成長段階を指定してください。");
+  if (n.demonContract && n.growth && !growthStages(n.growth).some((stage) => stage.demonContract)) e.push("魔神との契約を発動する成長段階を指定してください。");
+  if (n.rebirth?.splitAllowed && n.summoning?.timing !== "split") e.push("分裂後再生は分裂召喚の駒だけに設定できます。");
+  if (n.rebirth?.enhancement) {
+    if (n.rebirth.enhancedPattern === undefined || !n.patterns[n.rebirth.enhancedPattern]) e.push("強化再生の対象移動セットが不正です。");
+    if (!n.rebirth.enhancedAt) e.push("強化再生の発動進化状態を指定してください。");
+    if (n.rebirth.enhancedAt === "transformation" && !n.transformation) e.push("変身後の強化再生には変身設定が必要です。");
+    if ((n.rebirth.enhancedAt === 1 || n.rebirth.enhancedAt === 2) && !n.growth) e.push("成長後の強化再生には成長設定が必要です。");
+    if (n.rebirth.enhancedAt === 2 && growthStages(n.growth!).length < 2) e.push("成長第2段階の強化再生には第2段階が必要です。");
+  }
+  if (n.patterns.some((p) => p.kind === "direction" && p.passEnemies && (p.cannon || p.jumpEnemies))) e.push("すり抜けは敵飛び越し・キャノンと併用できません。");
+  if (!evolvedContext && n.patterns.some((p) => p.kind === "leap" && p.tracking && (p.usage ?? "both") !== "move"))
+    e.push("追跡は通常形態では移動専用の固定跳躍セットにだけ設定できます。");
+  if (n.patterns.some((p) => p.kind === "leap" && p.tracking && p.tracking.duration !== 1 && p.tracking.duration !== 2))
+    e.push("追跡期限は1手または2手です。");
+  if (n.patterns.some((p) => p.kind === "direction" && p.recoil && ((p.usage ?? "both") === "stationary" || p.cannon || p.phase === 2))) e.push("反動は静止捕獲・キャノン・2回目移動と併用できません。");
   if (n.patterns.some((p) => p.secondTrigger === "after-capture" && ((p.usage ?? "both") !== "move" || p.phase !== 2)))
     e.push("捕獲後移動は2回目の移動専用セットに設定してください。");
   if (!evolvedContext && n.patterns.some((p) => p.phase === 2 && (p.secondTrigger ?? "normal") === "normal" && (p.usage ?? "both") !== "move"))

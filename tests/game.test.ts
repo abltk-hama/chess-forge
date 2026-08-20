@@ -476,3 +476,154 @@ it("treats a second-phase capture as a threat", () => {
     true,
   );
 });
+
+describe("new movement abilities", () => {
+  const customMatch = (definition: Definition): Match => ({
+    ...createMatch([definition], emptySetup(), "royal-any"),
+    board: Array(64).fill(null),
+    turn: "white",
+  });
+
+  it("pass-through can either leave or capture a passed enemy while landing beyond it", () => {
+    const definition: Definition = { id: "pass", name: "Pass", symbol: "PS", isCrown: false, patterns: [{ kind: "direction", vectors: [{ dx: 0, dy: -1 }], range: "slide", passEnemies: 1 }] };
+    const s = customMatch(definition);
+    s.board[idx({ row: 6, col: 3 })] = { id: "p", color: "white", role: "custom", definitionId: definition.id, moved: false };
+    s.board[idx({ row: 4, col: 3 })] = { id: "e1", color: "black", role: "pawn", moved: false };
+    const moves = legal(s, { row: 6, col: 3 }, [definition]).filter((m) => m.to.row === 3 && m.to.col === 3);
+    expect(moves.some((m) => !m.passCaptureAt)).toBe(true);
+    const capture = moves.find((m) => m.passCaptureAt);
+    expect(capture?.passCaptureAt).toEqual({ row: 4, col: 3 });
+    const after = play(s, capture!, [definition]);
+    expect(after.board[idx({ row: 4, col: 3 })]).toBeNull();
+    expect(after.board[idx({ row: 3, col: 3 })]?.id).toBe("p");
+  });
+
+  it("pass-through directions cannot capture by landing on an enemy square", () => {
+    const definition: Definition = { id: "pass-no-normal", name: "Pass", symbol: "PN", isCrown: false, patterns: [{ kind: "direction", vectors: [{ dx: 0, dy: -1 }], range: "slide", passEnemies: 1 }] };
+    const s = customMatch(definition);
+    s.board[idx({ row: 6, col: 3 })] = { id: "p", color: "white", role: "custom", definitionId: definition.id, moved: false };
+    s.board[idx({ row: 4, col: 3 })] = { id: "e1", color: "black", role: "pawn", moved: false };
+    s.board[idx({ row: 2, col: 3 })] = { id: "e2", color: "black", role: "pawn", moved: false };
+    const moves = legal(s, { row: 6, col: 3 }, [definition]);
+    expect(moves.some((m) => m.to.row === 4 && m.to.col === 3)).toBe(false);
+    expect(moves.some((m) => m.to.row === 2 && m.to.col === 3)).toBe(false);
+    expect(moves.some((m) => m.to.row === 3 && m.to.col === 3 && m.passCaptureAt?.row === 4)).toBe(true);
+  });
+
+  it("two-enemy pass-through captures first or last according to the definition", () => {
+    const make = (passCapture: "first" | "last"): Definition => ({ id: `pass-${passCapture}`, name: "Pass2", symbol: "P2", isCrown: false, patterns: [{ kind: "direction", vectors: [{ dx: 0, dy: -1 }], range: "slide", passEnemies: 2, passCapture }] });
+    for (const mode of ["first", "last"] as const) {
+      const definition = make(mode), s = customMatch(definition);
+      s.board[idx({ row: 6, col: 3 })] = { id: "p", color: "white", role: "custom", definitionId: definition.id, moved: false };
+      s.board[idx({ row: 4, col: 3 })] = { id: "e1", color: "black", role: "pawn", moved: false };
+      s.board[idx({ row: 3, col: 3 })] = { id: "e2", color: "black", role: "pawn", moved: false };
+      const capture = legal(s, { row: 6, col: 3 }, [definition]).find((m) => m.to.row === 2 && m.passCaptureAt);
+      expect(capture?.passCaptureAt).toEqual(mode === "first" ? { row: 4, col: 3 } : { row: 3, col: 3 });
+      const after = play(s, capture!, [definition]);
+      expect(after.board.filter((piece) => piece?.color === "black")).toHaveLength(1);
+    }
+  });
+
+  it("pass-through capture needs an empty landing square beyond the target", () => {
+    const definition: Definition = { id: "pass-edge", name: "Pass", symbol: "PE", isCrown: false, patterns: [{ kind: "direction", vectors: [{ dx: 0, dy: -1 }], range: "slide", passEnemies: 1 }] };
+    const s = customMatch(definition);
+    s.board[idx({ row: 1, col: 3 })] = { id: "p", color: "white", role: "custom", definitionId: definition.id, moved: false };
+    s.board[idx({ row: 0, col: 3 })] = { id: "e", color: "black", role: "king", moved: false };
+    expect(legal(s, { row: 1, col: 3 }, [definition]).some((m) => m.passCaptureAt)).toBe(false);
+    expect(threatened(s, { row: 0, col: 3 }, "white", [definition])).toBe(false);
+  });
+
+  it("recoil capture is legal only when the forced landing square is empty", () => {
+    const definition: Definition = { id: "recoil", name: "Recoil", symbol: "RC", isCrown: false, patterns: [{ kind: "direction", vectors: [{ dx: 0, dy: -1 }], range: 3, recoil: true }] };
+    const s = customMatch(definition);
+    s.board[idx({ row: 6, col: 3 })] = { id: "p", color: "white", role: "custom", definitionId: definition.id, moved: false };
+    s.board[idx({ row: 3, col: 3 })] = { id: "e", color: "black", role: "pawn", moved: false };
+    let move = legal(s, { row: 6, col: 3 }, [definition]).find((m) => m.to.row === 3 && m.to.col === 3);
+    expect(move?.recoilTo).toEqual({ row: 4, col: 3 });
+    const after = play(s, move!, [definition]);
+    expect(after.board[idx({ row: 4, col: 3 })]?.id).toBe("p");
+    expect(after.board[idx({ row: 3, col: 3 })]).toBeNull();
+
+    const blocked = customMatch(definition);
+    blocked.board[idx({ row: 6, col: 3 })] = { id: "p", color: "white", role: "custom", definitionId: definition.id, moved: false };
+    blocked.board[idx({ row: 4, col: 3 })] = { id: "b", color: "white", role: "pawn", moved: false };
+    blocked.board[idx({ row: 3, col: 3 })] = { id: "e", color: "black", role: "pawn", moved: false };
+    move = legal(blocked, { row: 6, col: 3 }, [definition]).find((m) => m.to.row === 3 && m.to.col === 3);
+    expect(move).toBeUndefined();
+  });
+
+  it("dark blocks long-range and stationary captures after evolution", () => {
+    const dark: Definition = { id: "dark", name: "Dark", symbol: "DK", isCrown: false, dark: true, patterns: [{ kind: "direction", vectors: [{ dx: 0, dy: -1 }], range: 1 }] };
+    const attacker: Definition = { id: "a", name: "Attacker", symbol: "AT", isCrown: false, patterns: [{ kind: "direction", vectors: [{ dx: 0, dy: -1 }], range: "slide" }] };
+    const s = customMatch(attacker);
+    s.board[idx({ row: 6, col: 3 })] = { id: "a", color: "white", role: "custom", definitionId: attacker.id, moved: false };
+    s.board[idx({ row: 2, col: 3 })] = { id: "d", color: "black", role: "custom", definitionId: dark.id, moved: false, evolved: true };
+    expect(legal(s, { row: 6, col: 3 }, [attacker, dark]).some((m) => m.to.row === 2 && m.to.col === 3)).toBe(false);
+  });
+
+  it("zeroBody lifetime decreases at every owner turn end even when another piece moves", () => {
+    const zero: Definition = { id: "zero", name: "Zero", symbol: "ZR", isCrown: false, zeroBody: true, patterns: [{ kind: "direction", vectors: [{ dx: 0, dy: -1 }], range: 1 }] };
+    const s = customMatch(zero);
+    s.board[idx({ row: 5, col: 0 })] = { id: "z", color: "white", role: "custom", definitionId: zero.id, moved: false, zeroTurns: 3 };
+    s.board[idx({ row: 6, col: 7 })] = { id: "r", color: "white", role: "rook", moved: false };
+    const move = legal(s, { row: 6, col: 7 }, [zero]).find((m) => m.to.row === 5 && m.to.col === 7)!;
+    const after = play(s, move, [zero]);
+    expect(after.board.find((piece) => piece?.id === "z")?.zeroTurns).toBe(2);
+  });
+
+  it("barrier blocks directional jumping but not fixed leaps", () => {
+    const mover: Definition = { id: "m", name: "Mover", symbol: "M", isCrown: false, patterns: [
+      { kind: "direction", vectors: [{ dx: 1, dy: 0 }], range: 3, jumpEnemies: 2 },
+      { kind: "leap", vectors: [{ dx: 2, dy: 0 }], usage: "capture" },
+    ] };
+    const barrier: Definition = { id: "b", name: "Barrier", symbol: "B", isCrown: false, barrier: true, patterns: [{ kind: "direction", vectors: [], range: 1 }] };
+    const match = createMatch([], emptySetup(), "royal-any");
+    match.board = Array(64).fill(null); match.turn = "white";
+    match.board[idx({ row: 4, col: 2 })] = { id: "m1", color: "white", role: "custom", definitionId: "m", moved: false };
+    match.board[idx({ row: 4, col: 3 })] = { id: "b1", color: "black", role: "custom", definitionId: "b", moved: false };
+    match.board[idx({ row: 4, col: 4 })] = { id: "x", color: "black", role: "pawn", moved: false };
+    const moves = legal(match, { row: 4, col: 2 }, [mover, barrier]);
+    expect(moves.some((move) => move.to.col === 4)).toBe(true); // fixed Leap remains valid
+    expect(moves.some((move) => move.to.col === 5)).toBe(false); // Direction cannot pass barrier
+  });
+
+  it("tracking watches a leap target and captures it after it escapes within three squares", () => {
+    const tracker: Definition = { id: "t", name: "Tracker", symbol: "T", isCrown: false, patterns: [
+      { kind: "leap", vectors: [{ dx: 2, dy: 0 }], usage: "move", tracking: { duration: 1 } },
+    ] };
+    const match = createMatch([], emptySetup(), "royal-any");
+    match.board = Array(64).fill(null); match.turn = "white";
+    match.board[idx({ row: 4, col: 2 })] = { id: "tracker", color: "white", role: "custom", definitionId: "t", moved: false };
+    match.board[idx({ row: 4, col: 4 })] = { id: "target", color: "black", role: "pawn", moved: false };
+    match.board[idx({ row: 7, col: 7 })] = { id: "white-mover", color: "white", role: "rook", moved: false };
+    let after = play(match, { from: { row: 7, col: 7 }, to: { row: 7, col: 6 } }, [tracker]);
+    expect(after.trackingWatches?.some((item) => item.trackerId === "tracker" && item.targetId === "target")).toBe(true);
+    after = play(after, { from: { row: 4, col: 4 }, to: { row: 5, col: 4 } }, [tracker]);
+    expect(after.trackingTargets?.some((item) => item.trackerId === "tracker" && item.targetId === "target" && item.remaining === 1)).toBe(true);
+    expect(legal(after, { row: 4, col: 2 }, [tracker]).some((move) => move.to.row === 5 && move.to.col === 4)).toBe(true);
+  });
+
+  it("tracking does not target Royal pieces", () => {
+    const tracker: Definition = { id: "t", name: "Tracker", symbol: "T", isCrown: false, patterns: [
+      { kind: "leap", vectors: [{ dx: 2, dy: 0 }], usage: "move", tracking: { duration: 1 } },
+    ] };
+    const match = createMatch([], emptySetup(), "royal-any");
+    match.board = Array(64).fill(null); match.turn = "white";
+    match.board[idx({ row: 4, col: 2 })] = { id: "tracker", color: "white", role: "custom", definitionId: "t", moved: false };
+    match.board[idx({ row: 4, col: 4 })] = { id: "king", color: "black", role: "king", moved: false };
+    match.board[idx({ row: 7, col: 7 })] = { id: "white-mover", color: "white", role: "rook", moved: false };
+    const after = play(match, { from: { row: 7, col: 7 }, to: { row: 7, col: 6 } }, [tracker]);
+    expect(after.trackingWatches?.some((item) => item.targetId === "king")).toBe(false);
+  });
+
+  it("devotion swaps an evolved piece with a checked royal when the swap removes the attack", () => {
+    const devotee: Definition = { id: "d", name: "Devotee", symbol: "D", isCrown: false, devotion: true, transformation: { condition: { kind: "captures", subject: "self", threshold: 1 }, name: "D2", symbol: "D2", patterns: [{ kind: "direction", vectors: [], range: 1 }] }, patterns: [{ kind: "direction", vectors: [], range: 1 }] };
+    const match = createMatch([], emptySetup(), "royal-any");
+    match.board = Array(64).fill(null); match.turn = "white";
+    match.board[idx({ row: 7, col: 4 })] = { id: "king", color: "white", role: "king", moved: false };
+    match.board[idx({ row: 7, col: 3 })] = { id: "dev", color: "white", role: "custom", definitionId: "d", moved: true, evolved: true };
+    match.board[idx({ row: 0, col: 4 })] = { id: "rook", color: "black", role: "rook", moved: true };
+    const moves = legal(match, { row: 7, col: 3 }, [devotee]);
+    expect(moves.some((move) => move.swap === "devotion" && move.to.row === 7 && move.to.col === 4)).toBe(true);
+  });
+});

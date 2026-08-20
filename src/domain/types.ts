@@ -6,6 +6,9 @@ export type Role =
   | "bishop"
   | "knight"
   | "pawn"
+  | "raptor"
+  | "crow"
+  | "demon"
   | "custom";
 export type Preset = "classic" | "royal-any" | "royal-all";
 export type Range = 1 | 2 | 3 | "slide";
@@ -41,6 +44,13 @@ export interface GrowthStage {
   unlocks: Record<number, GrowthUnlock>;
   localSwap?: boolean;
   globalSwap?: boolean;
+  /** 零体の寿命をこの段階で回復する手番数。 */
+  zeroRecovery?: 0 | 1 | 2;
+  /** 第2段階限定。零体の寿命制限を解除する。 */
+  overcomeZero?: boolean;
+  /** この段階到達時に鷲狩を一度だけ発動する。 */
+  eagleHunt?: boolean;
+  demonContract?: boolean;
 }
 export interface Growth {
   condition: EvolutionCondition;
@@ -58,6 +68,8 @@ export interface Transformation {
   patterns: Pattern[];
   localSwap?: boolean;
   globalSwap?: boolean;
+  eagleHunt?: boolean;
+  demonContract?: boolean;
 }
 export interface Summoning {
   condition: EvolutionCondition;
@@ -97,6 +109,14 @@ export interface Direction {
   jumpEnemies?: 0 | 1 | 2 | boolean;
   /** Version 1 compatibility. New definitions use jumpAllies/jumpEnemies. */
   canJump?: boolean;
+  /** 指定数まで敵を通過でき、通過後の空きマスへ着地して対象1体を捕獲できる。 */
+  passEnemies?: 0 | 1 | 2;
+  /** 2体すり抜け時の捕獲対象。未指定のlegacy値は先頭扱い。 */
+  passCapture?: "first" | "last";
+  /** 最遠の合法マスにしか止まれない。 */
+  charge?: boolean;
+  /** 捕獲後に逆方向へ1マス反動する。 */
+  recoil?: boolean;
 }
 export interface Leap {
   kind: "leap";
@@ -109,6 +129,8 @@ export interface Leap {
   phase?: 1 | 2;
   /** Runtime-only: paired movement whose price is represented by stationary capture. */
   growthStationaryBase?: boolean;
+  /** 固定跳躍の射程から逃げた敵を追跡する。通常形態では移動専用セットのみ設定可能。 */
+  tracking?: { duration: 1 | 2 };
 }
 export type Pattern = Direction | Leap;
 export interface Definition {
@@ -120,6 +142,26 @@ export interface Definition {
   growth?: Growth;
   transformation?: Transformation;
   summoning?: Summoning;
+  dark?: boolean;
+  zeroBody?: boolean;
+  barrier?: boolean;
+  deathbind?: boolean;
+  rebirth?: {
+    splitAllowed?: boolean;
+    /** 強化再生の対象移動セット。 */
+    enhancedPattern?: number;
+    /** 強化再生が有効になる進化状態。 */
+    enhancedAt?: "transformation" | 1 | 2;
+    /** GrowthUnlock と同形式の再生後強化差分。 */
+    enhancement?: GrowthUnlock;
+  };
+  devotion?: boolean;
+  /** Version 1 compatibility: legacy definition-wide tracking. */
+  tracking?: boolean;
+  seal?: boolean;
+  eagleHunt?: boolean;
+  eagleTraining?: "coordination" | "hunting" | "support";
+  demonContract?: boolean;
 }
 export interface Piece {
   id: string;
@@ -134,6 +176,20 @@ export interface Piece {
   captures?: number;
   reachedEnemyDepth?: number;
   summoned?: boolean;
+  zeroTurns?: number;
+  rebirthUsed?: boolean;
+  rebirthPending?: boolean;
+  /** 強化再生を一度成立させた個体。 */
+  rebirthEnhanced?: boolean;
+  sealedUntil?: number;
+  raptorId?: string;
+  eagleOwnerId?: string;
+  eagleHuntUsed?: boolean;
+  demonContractUsed?: boolean;
+  eagleTraining?: "coordination" | "hunting" | "support";
+  contractName?: string;
+  demonTurns?: number;
+  demonCompensation?: boolean;
 }
 export interface Move {
   from: Pos;
@@ -144,7 +200,11 @@ export interface Move {
   enPassant?: boolean;
   promotion?: boolean;
   transit?: boolean;
-  swap?: "local" | "global";
+  swap?: "local" | "global" | "devotion";
+  /** Forced landing square after a recoil capture. */
+  recoilTo?: Pos;
+  /** Enemy removed while landing beyond it with pass-through capture. */
+  passCaptureAt?: Pos;
 }
 export interface Setup {
   rook: string | null;
@@ -166,6 +226,16 @@ export interface Match {
   draw: boolean;
   message: string;
   pendingSummon?: { owner: Color; definitionId: string; origin: Pos; remaining: number; candidates: Pos[] };
+  pendingRebirth?: { owner: Color; piece: Piece; origin: Pos; candidates: Pos[] };
+  pendingContract?: { kind: "raptor" | "crow" | "demon-own" | "demon-foe"; owner: Color; contractorId?: string; training?: "coordination" | "hunting" | "support"; origin: Pos; candidates: Pos[]; nextCandidates?: Pos[]; followupDemon?: boolean };
+  sealTurn?: number;
+  ply?: number;
+  /** Version 1 compatibility: ID of the piece that moved on the immediately preceding turn. */
+  lastMovedPieceId?: string;
+  /** 追跡持ちが自手番終了時に射程内で監視した敵。 */
+  trackingWatches?: { trackerId: string; patternIndex: number; targetId: string; duration: 1 | 2 }[];
+  /** 監視対象が射程外へ逃げたことで成立した追跡対象。remaining は使用可能な自手番数。 */
+  trackingTargets?: { trackerId: string; targetId: string; remaining: 1 | 2 }[];
   stats?: Record<
     Color,
     { captures: number; losses: number; evolutions: number; kingDepth: number }

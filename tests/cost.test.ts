@@ -4,6 +4,7 @@ import {
   errors,
   normalize,
   prepareDefinitionForEditing,
+  summonedDefinition,
 } from "../src/domain/cost";
 import type { Definition } from "../src/domain/types";
 const make = (partial: Partial<Definition> = {}): Definition => ({
@@ -488,4 +489,22 @@ it("rejects more than four movement sets", () => {
   expect(errors(make({ patterns: Array(5).fill(pattern) }))).toContain(
     "移動セットは1～4個です。",
   );
+});
+
+
+it("does not inherit rebirth costs into summoned or split-derived pieces", () => {
+  const definition = make({
+    rebirth: { splitAllowed: true },
+    summoning: {
+      timing: "split",
+      condition: { kind: "captures", subject: "self", threshold: 1 },
+      range: "adjacent",
+      name: "Shard",
+      symbol: "SH",
+      patterns: [{ kind: "direction", vectors: [{ dx: 1, dy: 0 }], range: 1 }],
+    },
+  });
+  const derived = summonedDefinition(definition);
+  expect(derived.rebirth).toBeUndefined();
+  expect(cost(derived)).toBe(cost(make({ name: "Shard", symbol: "SH" })));
 });

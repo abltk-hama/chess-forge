@@ -23,6 +23,8 @@ import {
   pieceText,
   play,
   placeSummon,
+  placeRebirth,
+  placeContract,
 } from "./domain/game";
 import { chooseSummonPlacement } from "./domain/ai";
 import {
@@ -53,6 +55,7 @@ import {
   type Color,
   type GameMode,
   type FormationMode,
+  type GrowthUnlock,
   type Match,
   type Pos,
   type Preset,
@@ -532,10 +535,14 @@ function TransformationPatterns({
               </label>
             </>
           ) : (
-            <LeapPicker
-              pattern={pattern}
-              onToggle={(vector) => toggleVector(index, vector)}
-            />
+            <>
+              <LeapPicker
+                pattern={pattern}
+                onToggle={(vector) => toggleVector(index, vector)}
+              />
+              <label><input type="checkbox" checked={!!pattern.tracking} onChange={(event) => update(index, { ...pattern, tracking: event.target.checked ? { duration: 1 } : undefined })} />追跡 (+5)</label>
+              {pattern.tracking && <label>追跡期限<select value={pattern.tracking.duration} onChange={(event) => update(index, { ...pattern, tracking: { duration: Number(event.target.value) as 1 | 2 } })}><option value="1">1手</option><option value="2">2手</option></select></label>}
+            </>
           )}
           <button
             type="button"
@@ -967,6 +974,23 @@ function Editor({
                       />
                       キャノン捕獲（スクリーン1枚必須）
                     </label>
+                    <label>
+                      敵すり抜け
+                      <select disabled={pattern.range === 1 || !!pattern.cannon || !!pattern.jumpEnemies} value={pattern.passEnemies ?? 0} onChange={(event) => {
+                        const passEnemies = Number(event.target.value) as 0 | 1 | 2;
+                        updatePattern(index, { ...pattern, passEnemies, passCapture: passEnemies === 2 ? (pattern.passCapture ?? "first") : undefined });
+                      }}>
+                        <option value="0">なし</option><option value="1">敵1枚まで (+2/方向)</option><option value="2">敵2枚まで</option>
+                      </select>
+                    </label>
+                    {pattern.passEnemies === 2 && <label>
+                      すり抜け捕獲対象
+                      <select value={pattern.passCapture ?? "first"} onChange={(event) => updatePattern(index, { ...pattern, passCapture: event.target.value as "first" | "last" })}>
+                        <option value="first">先頭 (+2/方向)</option><option value="last">最後 (+3/方向)</option>
+                      </select>
+                    </label>}
+                    <label><input type="checkbox" disabled={pattern.range === 1} checked={!!pattern.charge} onChange={(event) => updatePattern(index, { ...pattern, charge: event.target.checked })} />突進（最遠停止・距離コスト軽減）</label>
+                    <label><input type="checkbox" disabled={(pattern.usage ?? "both") === "stationary" || !!pattern.cannon || pattern.phase === 2} checked={!!pattern.recoil} onChange={(event) => updatePattern(index, { ...pattern, recoil: event.target.checked })} />反動捕獲 (+3)</label>
                   </>
                 ) : (
                   <>
@@ -994,6 +1018,8 @@ function Editor({
                         全解除
                       </button>
                     </div>
+                    <label><input type="checkbox" disabled={(pattern.usage ?? "both") !== "move"} checked={!!pattern.tracking} onChange={(event) => updatePattern(index, { ...pattern, tracking: event.target.checked ? { duration: 1 } : undefined })} />追跡 (+5)</label>
+                    {pattern.tracking && <label>追跡期限<select value={pattern.tracking.duration} onChange={(event) => updatePattern(index, { ...pattern, tracking: { duration: Number(event.target.value) as 1 | 2 } })}><option value="1">1手</option><option value="2">2手</option></select></label>}
                   </>
                 )}
               </fieldset>
@@ -1043,6 +1069,69 @@ function Editor({
             />
             王冠 (+25)
           </label>
+          <fieldset className="pattern-card">
+            <legend>特殊能力</legend>
+            <p>成長・変身限定の能力は、進化方式を設定した駒だけで有効になります。</p>
+            <label><input type="checkbox" checked={!!d.dark} onChange={(event) => setD({ ...d, dark: event.target.checked })} />暗躍 (+8・成長/変身限定)</label>
+            <label><input type="checkbox" checked={!!d.zeroBody} onChange={(event) => setD({ ...d, zeroBody: event.target.checked })} />零体（3手番で消滅・移動時は両軍2枚飛び越し）</label>
+            <label><input type="checkbox" checked={!!d.barrier} onChange={(event) => setD({ ...d, barrier: event.target.checked })} />結界 (+4)</label>
+            <label><input type="checkbox" checked={!!d.deathbind} onChange={(event) => setD({ ...d, deathbind: event.target.checked })} />道連れ (+9・成長/変身限定)</label>
+            <label><input type="checkbox" checked={!!d.rebirth} onChange={(event) => setD({ ...d, rebirth: event.target.checked ? { ...d.rebirth } : undefined })} />再生 (+8)</label>
+            {d.rebirth && d.summoning?.timing === "split" && <label><input type="checkbox" checked={!!d.rebirth.splitAllowed} onChange={(event) => setD({ ...d, rebirth: { ...d.rebirth!, splitAllowed: event.target.checked } })} />分裂後再生 (+5)</label>}
+            {d.rebirth && (d.growth || d.transformation) && (() => {
+              const enabled = !!d.rebirth?.enhancement;
+              const at = d.rebirth?.enhancedAt ?? (d.transformation ? "transformation" : 1);
+              const active = at === "transformation"
+                ? transformedDefinition(d)
+                : evolvedDefinition(d, at);
+              const patternIndex = Math.min(d.rebirth?.enhancedPattern ?? 0, Math.max(0, active.patterns.length - 1));
+              const pattern = active.patterns[patternIndex];
+              const enhancement: GrowthUnlock = d.rebirth?.enhancement ?? {};
+              const setEnhancement = (values: Partial<GrowthUnlock>) =>
+                setD({ ...d, rebirth: { ...d.rebirth!, enhancedAt: at, enhancedPattern: patternIndex, enhancement: { ...enhancement, ...values } } });
+              return <>
+                <label><input type="checkbox" checked={enabled} onChange={(event) => setD({ ...d, rebirth: { ...d.rebirth!, enhancedAt: event.target.checked ? at : undefined, enhancedPattern: event.target.checked ? patternIndex : undefined, enhancement: event.target.checked ? enhancement : undefined } })} />強化再生（強化差分コスト）</label>
+                {enabled && <>
+                  <label>強化が有効になる状態<select value={at} onChange={(event) => {
+                    const nextAt = event.target.value === "transformation" ? "transformation" : Number(event.target.value) as 1 | 2;
+                    setD({ ...d, rebirth: { ...d.rebirth!, enhancedAt: nextAt, enhancedPattern: 0 } });
+                  }}>
+                    {d.transformation && <option value="transformation">変身後</option>}
+                    {d.growth && <option value="1">成長 第1段階後</option>}
+                    {d.growth && growthStages(d.growth).length >= 2 && <option value="2">成長 第2段階後</option>}
+                  </select></label>
+                  <label>強化対象<select value={patternIndex} onChange={(event) => setD({ ...d, rebirth: { ...d.rebirth!, enhancedPattern: Number(event.target.value), enhancement: {} } })}>
+                    {active.patterns.map((_, index) => <option key={index} value={index}>移動セット {index + 1}</option>)}
+                  </select></label>
+                  {pattern && <>
+                    {(pattern.usage ?? "both") === "move" && <label><input type="checkbox" checked={!!enhancement.capture} onChange={(event) => setEnhancement({ capture: event.target.checked, stationary: false })} />通常捕獲を追加</label>}
+                    {(pattern.usage ?? "both") === "move" && <label><input type="checkbox" checked={!!enhancement.stationary} onChange={(event) => setEnhancement({ stationary: event.target.checked, capture: false })} />静止捕獲を追加</label>}
+                    {pattern.kind === "direction" && <label>再生後の距離<select value={enhancement.range ?? pattern.range} onChange={(event) => setEnhancement({ range: (event.target.value === "slide" ? "slide" : Number(event.target.value)) as Range })}>
+                      {[1,2,3].filter((value) => typeof pattern.range === "number" && value >= pattern.range).map((value) => <option key={value} value={value}>{value}</option>)}<option value="slide">スライド</option>
+                    </select></label>}
+                    {pattern.kind === "direction" && (enhancement.range ?? pattern.range) !== 1 && <>
+                      <label>再生後の味方飛び越し<select value={enhancement.jumpAllies ?? 0} onChange={(event) => setEnhancement({ jumpAllies: Number(event.target.value) as 0|1|2 })}><option value="0">なし</option><option value="1">1枚</option><option value="2">2枚</option></select></label>
+                      <label>再生後の敵飛び越し<select value={enhancement.jumpEnemies ?? 0} onChange={(event) => setEnhancement({ jumpEnemies: Number(event.target.value) as 0|1|2 })}><option value="0">なし</option><option value="1">1枚</option><option value="2">2枚</option></select></label>
+                      <label><input type="checkbox" checked={!!enhancement.cannon} onChange={(event) => setEnhancement({ cannon: event.target.checked })} />追加キャノン捕獲</label>
+                    </>}
+                    {pattern.kind === "leap" && <>
+                      <p>再生後の固定跳躍点</p>
+                      <LeapPicker pattern={{ ...pattern, vectors: enhancement.vectors ?? pattern.vectors }} onToggle={(vector) => {
+                        const vectors = enhancement.vectors ?? pattern.vectors;
+                        const selected = vectors.some((item) => item.dx === vector.dx && item.dy === vector.dy);
+                        setEnhancement({ vectors: selected ? vectors.filter((item) => item.dx !== vector.dx || item.dy !== vector.dy) : [...vectors, vector] });
+                      }} />
+                    </>}
+                  </>}
+                </>}
+              </>;
+            })()}
+            <label><input type="checkbox" checked={!!d.devotion} onChange={(event) => setD({ ...d, devotion: event.target.checked })} />献身 (+7・成長/変身限定)</label>
+            <label><input type="checkbox" checked={!!d.seal} onChange={(event) => setD({ ...d, seal: event.target.checked })} />封印 (+5・成長/変身限定)</label>
+            <label><input type="checkbox" checked={!!d.eagleHunt} onChange={(event) => setD({ ...d, eagleHunt: event.target.checked, eagleTraining: event.target.checked ? (d.eagleTraining ?? "coordination") : undefined })} />鷹狩 (+5・成長/変身限定)</label>
+            {d.eagleHunt && <label>育成方式<select value={d.eagleTraining ?? "coordination"} onChange={(event) => setD({ ...d, eagleTraining: event.target.value as "coordination" | "hunting" | "support" })}><option value="coordination">連携型：契約者と位置交換</option><option value="hunting">狩猟型：契約者周辺へ移動捕獲</option><option value="support">援護型：位置交換＋同色マス静止捕獲</option></select></label>}
+            <label><input type="checkbox" checked={!!d.demonContract} onChange={(event) => setD({ ...d, demonContract: event.target.checked })} />魔神との契約 (+3・成長/変身限定)</label>
+          </fieldset>
           <fieldset className="pattern-card growth-card">
             <legend>成長</legend>
             <label>
@@ -1177,6 +1266,10 @@ function Editor({
                 </label>
                 <label><input type="checkbox" checked={!!activeGrowthStage.localSwap} onChange={(event) => writeGrowthStage(growthStageIndex, { ...activeGrowthStage, localSwap: event.target.checked })} />成長後に近接交換 (+3)</label>
                 <label><input type="checkbox" checked={!!activeGrowthStage.globalSwap} onChange={(event) => writeGrowthStage(growthStageIndex, { ...activeGrowthStage, globalSwap: event.target.checked })} />成長後に全域交換・1回 (+5)</label>
+                {d.zeroBody && <label>零体の寿命回復<select value={activeGrowthStage.zeroRecovery ?? 0} onChange={(event) => writeGrowthStage(growthStageIndex, { ...activeGrowthStage, zeroRecovery: Number(event.target.value) as 0 | 1 | 2, overcomeZero: false })}><option value="0">なし</option><option value="1">+1手番 (+3)</option><option value="2">+2手番 (+6)</option></select></label>}
+                {d.zeroBody && growthStageIndex === 1 && <label><input type="checkbox" checked={!!activeGrowthStage.overcomeZero} onChange={(event) => writeGrowthStage(growthStageIndex, { ...activeGrowthStage, overcomeZero: event.target.checked, zeroRecovery: 0 })} />零体の寿命を克服 (+15)</label>}
+                {d.eagleHunt && <label><input type="checkbox" checked={!!activeGrowthStage.eagleHunt} onChange={(event) => writeGrowthStage(growthStageIndex, { ...activeGrowthStage, eagleHunt: event.target.checked })} />この段階で鷹狩を発動</label>}
+                {d.demonContract && <label><input type="checkbox" checked={!!activeGrowthStage.demonContract} onChange={(event) => writeGrowthStage(growthStageIndex, { ...activeGrowthStage, demonContract: event.target.checked })} />この段階で魔神との契約を発動</label>}
                 {d.patterns.map((pattern, index) => {
                   const unlock = activeGrowthStage.unlocks[index] ?? {};
                   const moveOnly = (pattern.usage ?? "both") === "move";
@@ -2313,6 +2406,7 @@ function Game({
   const [pending, setPending] = useState<
     import("./domain/types").Move[] | null
   >(null);
+  const [passChoice, setPassChoice] = useState<import("./domain/types").Move[] | null>(null);
   const [thinking, setThinking] = useState(false);
   const [aiError, setAiError] = useState("");
   const [paused, setPaused] = useState(false), [stepRequested, setStepRequested] = useState(false), [watchSpeed, setWatchSpeed] = useState<0 | 400 | 1000>(400);
@@ -2321,6 +2415,15 @@ function Game({
     if (!aiTurn || (mode === "ai-ai" && paused && !stepRequested)) return;
     if (match.pendingSummon && (mode === "ai-ai" || match.pendingSummon.owner === "black")) {
       setMatch(placeSummon(match, chooseSummonPlacement(match, defs) ?? match.pendingSummon.candidates[0]));
+      return;
+    }
+    if (match.pendingContract && (mode === "ai-ai" || match.pendingContract.owner === "black")) {
+      setMatch(placeContract(match, match.pendingContract.candidates[0]));
+      return;
+    }
+    if (match.pendingContract) return;
+    if (match.pendingRebirth && match.pendingRebirth.owner === match.turn && (mode === "ai-ai" || match.pendingRebirth.owner === "black")) {
+      setMatch(placeRebirth(match, match.pendingRebirth.candidates[0]));
       return;
     }
     if (match.winner || match.draw) return;
@@ -2379,11 +2482,15 @@ function Game({
     window.addEventListener("keydown", keydown);
     return () => window.removeEventListener("keydown", keydown);
   }, [pending]);
-  const locked = thinking || mode === "ai-ai" || (mode === "ai" && match.turn === "black" && match.pendingSummon?.owner !== "white");
+  const locked = !!passChoice || thinking || mode === "ai-ai" || (mode === "ai" && match.turn === "black" && match.pendingSummon?.owner !== "white" && match.pendingContract?.owner !== "white");
   const moves = selected ? legal(match, selected, defs) : [];
   const targets = new Set(
-    match.pendingSummon
+    match.pendingContract
+      ? match.pendingContract.candidates.map((p) => `${p.row},${p.col}`)
+      : match.pendingSummon
       ? match.pendingSummon.candidates.map((p) => `${p.row},${p.col}`)
+      : match.pendingRebirth && match.pendingRebirth.owner === match.turn
+        ? match.pendingRebirth.candidates.map((p) => `${p.row},${p.col}`)
       : pending
       ? pending
           .filter((m) => m.next)
@@ -2421,8 +2528,16 @@ function Game({
   }
   const click = (p: Pos) => {
     const piece = match.board[idx(p)];
+    if (match.pendingContract) {
+      if (match.pendingContract.candidates.some((candidate) => candidate.row === p.row && candidate.col === p.col)) setMatch(placeContract(match, p));
+      return;
+    }
     if (match.pendingSummon) {
       if (match.pendingSummon.candidates.some((candidate) => candidate.row === p.row && candidate.col === p.col)) setMatch(placeSummon(match, p));
+      return;
+    }
+    if (match.pendingRebirth && match.pendingRebirth.owner === match.turn) {
+      if (match.pendingRebirth.candidates.some((candidate) => candidate.row === p.row && candidate.col === p.col)) setMatch(placeRebirth(match, p));
       return;
     }
     if (!pending && inspected?.row === p.row && inspected.col === p.col) {
@@ -2457,6 +2572,12 @@ function Game({
           setPending(candidates);
           return;
         }
+        const passCapture = candidates.find((move) => move.passCaptureAt);
+        const passMove = candidates.find((move) => !move.passCaptureAt);
+        if (passCapture && passMove) {
+          setPassChoice([passCapture, passMove]);
+          return;
+        }
         setMatch(play(match, candidates[0], defs));
         setSelected(null);
         setInspected(null);
@@ -2475,7 +2596,10 @@ function Game({
           {pending && (
             <p>{pending.some((move) => move.transit) ? "飛翔の着地点を選んでください。中継地点の駒は捕獲しません。" : "2回目の移動先を選ぶか、「ここで手番終了」を選択してください。"}</p>
           )}
+          {match.pendingContract && <p>{match.pendingContract.kind === "raptor" ? "鷲系" : match.pendingContract.kind === "crow" ? "鴉" : "魔神"}の配置先を選んでください。</p>}
           {match.pendingSummon && <p>派生駒の配置先を選んでください（残り{match.pendingSummon.remaining}体）。</p>}
+          {match.pendingRebirth && match.pendingRebirth.owner === match.turn && <p>再生する駒の配置先を選んでください。</p>}
+          {passChoice && <div className="pass-choice"><span>通過した敵駒を捕獲しますか？</span> <button onClick={() => { setMatch(play(match, passChoice.find((move) => move.passCaptureAt)!, defs)); setPassChoice(null); setSelected(null); setInspected(null); }}>捕獲する</button> <button onClick={() => { setMatch(play(match, passChoice.find((move) => !move.passCaptureAt)!, defs)); setPassChoice(null); setSelected(null); setInspected(null); }}>移動のみ</button> <button onClick={() => setPassChoice(null)}>キャンセル</button></div>}
         </div>
         <div className="range-controls">
           {mode === "ai-ai" && <>
@@ -2545,7 +2669,7 @@ function Game({
                 >
                   {piece && (
                     <span
-                      className={`${piece.color} ${pieceFocusClass} ${piece.evolved ? "piece-evolved" : ""}`}
+                      className={`${piece.color} ${pieceFocusClass} ${piece.evolved ? "piece-evolved" : ""} ${piece.sealedUntil && (match.ply ?? 0) <= piece.sealedUntil ? "piece-sealed" : ""}`}
                     >
                       {pieceText(piece, defs)}
                     </span>
@@ -2576,6 +2700,44 @@ function Game({
             <span className="legend-local-swap">近接交換</span>
             <span className="legend-global-swap">全域交換</span>
           </div>
+          {inspectedPiece && inspectedPiece.role !== "custom" && (() => {
+            const statuses: string[] = [];
+            if (inspectedPiece.role === "raptor") statuses.push(`鷹狩・${inspectedPiece.eagleTraining === "hunting" ? "狩猟型" : inspectedPiece.eagleTraining === "support" ? "援護型" : "連携型"}`, inspectedPiece.eagleTraining === "hunting" ? "契約者周辺へ距離・色無視の移動捕獲" : inspectedPiece.eagleTraining === "support" ? "契約者と位置交換＋契約者周辺の同色マスへ静止捕獲" : "契約者と位置交換", "通常移動：同色マス12点への固定跳躍");
+            if (inspectedPiece.role === "crow") statuses.push("鴉：8方向へ最大3マス移動・捕獲");
+            if (inspectedPiece.role === "demon") statuses.push("魔神：周囲8マスへ最大2回移動・1手1捕獲", inspectedPiece.demonTurns === undefined ? "寿命なし" : `残り寿命 ${inspectedPiece.demonTurns}自手番`);
+            return statuses.length ? <div className="piece-status"><strong>{inspectedPiece.contractName ?? pieceText(inspectedPiece, defs)}</strong>{statuses.map((status) => <p key={status}>{status}</p>)}</div> : null;
+          })()}
+          {inspectedPiece && (() => {
+            const definition = inspectedPiece.role === "custom"
+              ? defs.find((item) => item.id === inspectedPiece.definitionId)
+              : undefined;
+            const sealed = !!inspectedPiece.sealedUntil && (match.ply ?? 0) <= inspectedPiece.sealedUntil;
+            const statuses: string[] = [];
+            if (definition?.zeroBody) {
+              const stage = inspectedPiece.growthStage ?? (inspectedPiece.evolved ? 1 : 0);
+              const overcome = !!(definition.growth && stage > 0 && growthStages(definition.growth)[stage - 1]?.overcomeZero);
+              statuses.push(overcome ? "零体：寿命制限克服" : `零体：残り寿命 ${inspectedPiece.zeroTurns ?? 3}手番`);
+            }
+            if (sealed) statuses.push("封印中：特殊能力停止（この陣営の手番終了まで）");
+            if (inspectedPiece.rebirthEnhanced) statuses.push("強化再生済み：再生後強化が有効");
+            const activeForStatus = definition
+              ? inspectedPiece.growthStage && definition.growth
+                ? evolvedDefinition(definition, inspectedPiece.growthStage)
+                : inspectedPiece.evolved && definition.transformation
+                  ? transformedDefinition(definition)
+                  : definition
+              : undefined;
+            const tracked = (match.trackingTargets ?? []).filter((item) => item.trackerId === inspectedPiece.id);
+            for (const item of tracked) {
+              const target = match.board.find((piece) => piece?.id === item.targetId);
+              if (target) statuses.push(`追跡対象：${pieceText(target, defs)}（残り${item.remaining}手）`);
+            }
+            const watched = (match.trackingWatches ?? []).filter((item) => item.trackerId === inspectedPiece.id);
+            if (watched.length) statuses.push(`監視中：${watched.length}体`);
+            return statuses.length ? (
+              <div className="piece-status"><strong>駒の状態</strong>{statuses.map((status) => <p key={status}>{status}</p>)}</div>
+            ) : null;
+          })()}
           {inspectedPiece?.role === "custom" &&
             (() => {
               const definition = defs.find(

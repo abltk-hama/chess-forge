@@ -340,3 +340,48 @@ describe("growth", () => {
     expect(match.board.find((item) => item?.id === "f")?.evolved).not.toBe(true);
   });
 });
+
+describe("enhanced rebirth", () => {
+  it("applies a Growth-style pattern enhancement only to the reborn individual", () => {
+    const definition: Definition = {
+      id: "rebirth-grow", name: "Rebirth Grow", symbol: "RG", isCrown: false,
+      patterns: [{ kind: "direction", vectors: [{ dx: 0, dy: -1 }], range: 1, usage: "move" }],
+      growth: {
+        condition: { kind: "captures", subject: "self", threshold: 1 },
+        unlocks: { 0: { range: 2 } },
+      },
+      rebirth: {
+        enhancedAt: 1,
+        enhancedPattern: 0,
+        enhancement: { range: 3, capture: true },
+      },
+    };
+    const match = createMatch([definition], emptySetup(), "royal-any");
+    match.board = Array(64).fill(null);
+    match.board[idx({ row: 4, col: 4 })] = {
+      id: "enhanced", color: "white", role: "custom", definitionId: definition.id,
+      moved: true, evolved: true, growthStage: 1, rebirthUsed: true, rebirthEnhanced: true,
+    };
+    match.board[idx({ row: 1, col: 4 })] = { id: "target", color: "black", role: "pawn", moved: true };
+    const enhancedMoves = pseudo(match, { row: 4, col: 4 }, [definition]);
+    expect(enhancedMoves.some((move) => move.to.row === 1 && move.to.col === 4)).toBe(true);
+
+    match.board[idx({ row: 4, col: 4 })] = { ...match.board[idx({ row: 4, col: 4 })]!, rebirthEnhanced: false };
+    const normalMoves = pseudo(match, { row: 4, col: 4 }, [definition]);
+    expect(normalMoves.some((move) => move.to.row === 1 && move.to.col === 4)).toBe(false);
+  });
+
+  it("prices enhanced rebirth from the positive movement-set difference", () => {
+    const base: Definition = {
+      id: "rebirth-cost", name: "Rebirth Cost", symbol: "RC", isCrown: false,
+      patterns: [{ kind: "direction", vectors: [{ dx: 0, dy: -1 }], range: 1, usage: "move" }],
+      growth: { condition: { kind: "captures", subject: "self", threshold: 1 }, unlocks: {} },
+      rebirth: {},
+    };
+    const enhanced: Definition = {
+      ...base,
+      rebirth: { enhancedAt: 1, enhancedPattern: 0, enhancement: { range: 3, capture: true } },
+    };
+    expect(definitionCost(enhanced)).toBeGreaterThan(definitionCost(base));
+  });
+});

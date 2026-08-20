@@ -30,6 +30,9 @@ const standardValue: Record<
   bishop: 325,
   rook: 500,
   queen: 900,
+  raptor: 900,
+  crow: 750,
+  demon: 1000,
 };
 
 function activeDefinition(piece: Piece, definition: Definition) {

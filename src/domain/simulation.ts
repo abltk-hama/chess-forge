@@ -1,5 +1,5 @@
 import { chooseMove, chooseSummonPlacement } from "./ai";
-import { createMatch, isRoyal, pieceText, placeSummon, play, threatened } from "./game";
+import { createMatch, isRoyal, pieceText, placeSummon, placeContract, play, threatened } from "./game";
 import type { AIDifficulty, Color, Definition, Match, Piece, PieceSimulationStat, Setup, SimulationResult } from "./types";
 
 export interface SimulationOptions { games: number; whiteDifficulty: AIDifficulty; blackDifficulty: AIDifficulty; maxPlies: number; seed: number; swapSides?: boolean; thinkTimeMs?: 10 | 25 | 100; }
@@ -26,6 +26,11 @@ export function runSimulation(defs: Definition[], setup: Setup, preset: Match["p
         if (!candidate) break;
         const beforeIds = new Set(match.board.flatMap((piece) => piece ? [piece.id] : []));
         match = placeSummon(match, candidate);
+        match.board.forEach((piece) => { if (piece && !beforeIds.has(piece.id)) { const stat = ensure(stats, piece, defs); stat.generated++; stat.summons++; } });
+      }
+      while (match.pendingContract) {
+        const beforeIds = new Set(match.board.flatMap((piece) => piece ? [piece.id] : []));
+        match = placeContract(match, match.pendingContract.candidates[Math.floor(random() * match.pendingContract.candidates.length)]);
         match.board.forEach((piece) => { if (piece && !beforeIds.has(piece.id)) { const stat = ensure(stats, piece, defs); stat.generated++; stat.summons++; } });
       }
       const swapped = !!options.swapSides && gameIndex >= Math.ceil(options.games / 2);

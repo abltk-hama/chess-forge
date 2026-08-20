@@ -84,3 +84,20 @@ describe("summoning", () => {
     expect(after.pendingSummon).toBeUndefined();
   });
 });
+
+describe("split rebirth sequencing", () => {
+  it("does not block the opponent turn and refreshes rebirth squares when the owner turn returns", () => {
+    const d: Definition = { ...definition("split"), rebirth: { splitAllowed: true } };
+    let next = play(state(d), { from: { row: 4, col: 2 }, to: { row: 4, col: 3 } }, [d]);
+    next = placeSummon(next, next.pendingSummon!.candidates[0]);
+    next = placeSummon(next, next.pendingSummon!.candidates[0]);
+    expect(next.turn).toBe("black");
+    expect(next.pendingRebirth?.owner).toBe("white");
+
+    next.board[idx({ row: 0, col: 0 })] = { id: "br", color: "black", role: "rook", moved: true };
+    const afterBlack = play(next, { from: { row: 0, col: 0 }, to: { row: 0, col: 1 } }, [d]);
+    expect(afterBlack.turn).toBe("white");
+    expect(afterBlack.pendingRebirth?.owner).toBe("white");
+    expect(afterBlack.pendingRebirth?.candidates.every((pos) => !afterBlack.board[idx(pos)])).toBe(true);
+  });
+});
