@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   cost,
   errors,
+  evolvedDefinition,
   normalize,
   prepareDefinitionForEditing,
   summonedDefinition,
@@ -539,5 +540,48 @@ describe("direction cost wallet", () => {
     expect(cost(make({ patterns: [direction(slide, "slide", "capture")] }))).toBe(23);
     expect(cost(make({ patterns: [direction(slide, "slide", "stationary")] }))).toBe(23);
     expect(cost(make({ patterns: [direction(slide, "slide", "both")] }))).toBe(27);
+  });
+});
+
+describe("chain movement pricing", () => {
+  const chain = (directionCount: number, maxChains: 2 | 3 | 4, usage: "move" | "both" = "move") => ({
+    kind: "chain" as const,
+    vectors: [{ dx: 0, dy: -1 }, { dx: 1, dy: 0 }, { dx: 0, dy: 1 }, { dx: -1, dy: 0 }].slice(0, directionCount),
+    maxChains,
+    usage,
+  });
+
+  it("uses direction count times the triangular chain count plus usage", () => {
+    expect(cost(make({ patterns: [chain(2, 2)] }))).toBe(6);
+    expect(cost(make({ patterns: [chain(2, 2, "both")] }))).toBe(6);
+    expect(cost(make({ patterns: [chain(4, 3, "both")] }))).toBe(24);
+  });
+
+  it("halves initial-only chain movement with rounding up", () => {
+    expect(cost(make({ patterns: [{ ...chain(4, 3, "both"), initialOnly: true }] }))).toBe(12);
+  });
+
+  it("prices transformed chain movement using one fewer chain", () => {
+    expect(cost(make({ patterns: [chain(4, 4, "both")] }), true)).toBe(24);
+    expect(cost(make({ patterns: [chain(2, 2, "both")] }), true)).toBe(2);
+  });
+
+  it("pays two usage points per actual chain from the shared wallet", () => {
+    const slide = { kind: "direction" as const, vectors: [{ dx: 0, dy: -1 }, { dx: 1, dy: 0 }, { dx: 0, dy: 1 }, { dx: -1, dy: 0 }], range: "slide" as const, usage: "move" as const };
+    expect(cost(make({ patterns: [slide, chain(1, 3, "both")] }))).toBe(31);
+  });
+
+  it("allows growth to unlock capture for a move-only chain", () => {
+    const definition = make({ patterns: [chain(2, 3)], growth: { condition: { kind: "captures", subject: "self", threshold: 1 }, unlocks: { 0: { capture: true, maxChains: 4 } } } });
+    const evolved = evolvedDefinition(definition);
+    expect(evolved.patterns[0].usage).toBe("both");
+    expect(evolved.patterns[0].kind === "chain" && evolved.patterns[0].maxChains).toBe(4);
+    expect(errors(definition)).not.toContain("連鎖移動には捕獲・静止捕獲を成長解放できません。");
+  });
+
+  it("rejects unsupported usage, second phase and normal four-chain definitions", () => {
+    expect(errors(make({ patterns: [{ ...chain(1, 2), usage: "capture" }] }))).toContain("連鎖移動は移動専用または移動・捕獲だけ設定できます。");
+    expect(errors(make({ patterns: [{ ...chain(1, 2), phase: 2 }] }))).toContain("連鎖移動は2回目移動・捕獲後移動・飛翔に設定できません。");
+    expect(errors(make({ patterns: [chain(1, 4)] }))).toContain("4連鎖は成長・変身後限定です。");
   });
 });

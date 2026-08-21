@@ -56,6 +56,32 @@ describe("App", () => {
     expect(screen.getByText("移動セット 4")).toBeInTheDocument();
   });
 
+  it("configures chain movement with orthogonal directions and chain count", () => {
+    render(<App />);
+    fireEvent.click(screen.getAllByRole("button", { name: "駒を作る" })[0]);
+    fireEvent.change(screen.getByLabelText("移動セット1の種類"), { target: { value: "chain" } });
+    expect(screen.getByLabelText("移動セット1の移動回数")).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "前" }));
+    fireEvent.click(screen.getByRole("button", { name: "右" }));
+    fireEvent.change(screen.getByText("最大連鎖数").querySelector("select")!, { target: { value: "3" } });
+    expect(screen.getByRole("heading", { name: /コスト 12\/30/ })).toBeInTheDocument();
+    const usage = screen.getByLabelText("移動セット1の用途");
+    expect(usage.querySelector('option[value="capture"]')).toBeNull();
+    expect(usage.querySelector('option[value="stationary"]')).toBeNull();
+  });
+
+  it("allows growth to unlock capture for move-only chain movement", () => {
+    render(<App />);
+    fireEvent.click(screen.getAllByRole("button", { name: "駒を作る" })[0]);
+    fireEvent.change(screen.getByLabelText("移動セット1の種類"), { target: { value: "chain" } });
+    fireEvent.click(screen.getByRole("button", { name: "前" }));
+    fireEvent.change(screen.getByLabelText("移動セット1の用途"), { target: { value: "move" } });
+    fireEvent.change(screen.getByLabelText("進化方式"), { target: { value: "growth" } });
+    expect(screen.getByLabelText("通常捕獲")).toBeEnabled();
+    fireEvent.click(screen.getByLabelText("通常捕獲"));
+    expect(screen.getByLabelText("通常捕獲")).toBeChecked();
+  });
+
   it("configures growth conditions and unlocked abilities", () => {
     render(<App />);
     fireEvent.click(screen.getAllByRole("button", { name: "駒を作る" })[0]);

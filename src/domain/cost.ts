@@ -47,6 +47,7 @@ export const COST = {
   seal: 5,
   eagleHunt: 5,
   demonContract: 3,
+  dogHunt: 5,
   budget: 30,
 };
 const key = (v: Vec) => `${v.dx},${v.dy}`;
@@ -54,7 +55,7 @@ export const unique = (v: Vec[]) => [
   ...new Map(v.filter((x) => x.dx || x.dy).map((x) => [key(x), x])).values(),
 ];
 const preparePatternForEditing = (pattern: Pattern): Pattern => {
-  if (pattern.kind === "leap")
+  if (pattern.kind !== "direction")
     return { ...pattern, vectors: pattern.vectors.map((vector) => ({ ...vector })) };
   const { canJump: _legacyCanJump, ...current } = pattern;
   return {
@@ -181,6 +182,8 @@ export function applyPatternEnhancement(d: Definition, patternIndex: number, unl
       const usage = unlock.capture ? "both" : pattern.usage;
       const enhanced: Pattern = pattern.kind === "leap"
         ? { ...pattern, usage, vectors: unlock.vectors ?? pattern.vectors }
+        : pattern.kind === "chain"
+          ? { ...pattern, usage: usage === "move" ? "move" : "both", maxChains: unlock.maxChains ?? pattern.maxChains }
         : {
             ...pattern,
             range: unlock.range ?? pattern.range,
@@ -190,7 +193,7 @@ export function applyPatternEnhancement(d: Definition, patternIndex: number, unl
             jumpAllies: Math.max(jumpLimit(pattern.jumpAllies, pattern.canJump), unlock.jumpAllies ?? 0) as 0 | 1 | 2,
             jumpEnemies: Math.max(jumpLimit(pattern.jumpEnemies, pattern.canJump), unlock.jumpEnemies ?? 0) as 0 | 1 | 2,
           };
-      return unlock.stationary
+      return unlock.stationary && enhanced.kind !== "chain"
         ? [{ ...enhanced, growthStationaryBase: true }, { ...enhanced, usage: "stationary" }]
         : [enhanced];
     }),
@@ -221,6 +224,8 @@ export function evolvedDefinition(d: Definition, requestedStage?: number): Defin
       const evolvedPattern: Pattern =
         pattern.kind === "leap"
           ? { ...pattern, usage, vectors: unlock.vectors ?? pattern.vectors }
+          : pattern.kind === "chain"
+            ? { ...pattern, usage: usage === "move" ? "move" : "both", maxChains: unlock.maxChains ?? pattern.maxChains }
           : {
             ...pattern,
             range: unlock.range ?? pattern.range,
@@ -236,7 +241,7 @@ export function evolvedDefinition(d: Definition, requestedStage?: number): Defin
               unlock.jumpEnemies ?? 0,
             ) as 0 | 1 | 2,
           };
-      return unlock.stationary
+      return unlock.stationary && evolvedPattern.kind !== "chain"
         ? [
             { ...evolvedPattern, growthStationaryBase: true },
             { ...evolvedPattern, usage: "stationary" },
@@ -276,7 +281,7 @@ export function growthCost(d: Definition) {
     const difficulty = conditionDifficulty(stage.condition);
     const discount = Math.floor(gap * Math.min(0.8, difficulty * 0.2));
     let charge = Math.max(gap ? 1 : 0, gap - discount);
-    const special = (stage.zeroRecovery ?? 0) * 3 + (stage.overcomeZero ? 15 : 0) + (stage.eagleHunt ? COST.eagleHunt : 0) + (stage.demonContract ? COST.demonContract : 0);
+  const special = (stage.zeroRecovery ?? 0) * 3 + (stage.overcomeZero ? 15 : 0) + (stage.eagleHunt ? COST.eagleHunt : 0) + (stage.demonContract ? COST.demonContract : 0) + (stage.dogHunt ? COST.dogHunt : 0);
     charge += Math.max(0, special - Math.floor(special * Math.min(0.8, difficulty * 0.2)));
     if (stage.unlockCrown && !growthStages(d.growth!)[index - 1]?.unlockCrown)
       charge = Math.max(10, charge);
@@ -318,7 +323,8 @@ const directionMoveUnit = (vector: Vec, range: Range) => {
 /** Direction Pattern群だけを、新しい財布式で評価する純粋関数。 */
 export function directionCostBreakdown(patterns: Pattern[]): DirectionCostBreakdown {
   const directionsOnly = patterns.filter((pattern): pattern is Extract<Pattern, { kind: "direction" }> => pattern.kind === "direction" && !pattern.growthStationaryBase);
-  if (!directionsOnly.length) return { moveDirection: 0, rangeBase: 0, rangeEvaluation: 0, usage: 0, usageWallet: COST.usageWalletLimit, usageCharge: 0, total: 0 };
+  const chainsOnly = patterns.filter((pattern): pattern is Extract<Pattern, { kind: "chain" }> => pattern.kind === "chain" && !pattern.growthStationaryBase);
+  if (!directionsOnly.length && !chainsOnly.length) return { moveDirection: 0, rangeBase: 0, rangeEvaluation: 0, usage: 0, usageWallet: COST.usageWalletLimit, usageCharge: 0, total: 0 };
   let moveDirection = 0;
   let usage = 0;
   let rangeEvaluation = 0;
@@ -341,6 +347,11 @@ export function directionCostBreakdown(patterns: Pattern[]): DirectionCostBreakd
       }
     }
   }
+  for (const pattern of chainsOnly) {
+    if ((pattern.usage ?? "both") !== "both") continue;
+    const chainUsage = pattern.maxChains * 2;
+    usage += pattern.initialOnly || pattern.evolvedInitialOnly ? Math.ceil(chainUsage / 2) : chainUsage;
+  }
   const highestRange: Range = highestRank >= 4 ? "slide" : highestRank === 3 ? 3 : highestRank === 2 ? 2 : 1;
   const rangeBase = COST.rangeBase[highestRange];
   const usageWallet = Math.max(0, COST.usageWalletLimit - rangeEvaluation);
@@ -351,7 +362,7 @@ export function transformationLimit(d: Definition) {
   if (!d.transformation) return 30;
   return [30, 24, 26, 28, 29][conditionDifficulty(d.transformation.condition)];
 }
-export function cost(d: Definition) {
+export function cost(d: Definition, transformedContext = false) {
   if (
     d.patterns.some(
       (p) =>
@@ -361,7 +372,7 @@ export function cost(d: Definition) {
           typeof p.jumpEnemies === "boolean"),
     )
   )
-    return legacyCost(d);
+    return legacyCost(d, transformedContext);
   let n = d.isCrown ? COST.crown : 0,
     cannon = false,
     slide = false;
@@ -369,7 +380,12 @@ export function cost(d: Definition) {
   for (const p of normalize(d).patterns) {
     if (p.growthStationaryBase) continue;
     const usage = p.usage ?? "both";
-    if (p.kind === "leap") {
+    if (p.kind === "chain") {
+      const chargedChains = transformedContext ? Math.max(1, p.maxChains - 1) : p.maxChains;
+      let value = p.vectors.length * chargedChains * (chargedChains + 1) / 2;
+      if (p.initialOnly || p.evolvedInitialOnly) value = Math.ceil(value / 2);
+      n += value;
+    } else if (p.kind === "leap") {
       const unit = COST.usageLeap[usage];
       let value = p.vectors.length * (p.initialOnly || p.evolvedInitialOnly ? Math.ceil(unit / 2) : unit);
       if (p.phase === 2 && p.secondTrigger && p.secondTrigger !== "normal" && !p.initialOnly && !p.evolvedInitialOnly) value = Math.ceil(value / 2);
@@ -406,7 +422,7 @@ export function cost(d: Definition) {
   }
   const evolution = d.growth ?? d.transformation;
   n += directionPricing.total + (cannon ? COST.cannonBase : 0) + (evolution?.localSwap ? 3 : 0) + (evolution?.globalSwap ? 5 : 0);
-  n += (d.dark ? COST.dark : 0) + (d.barrier ? COST.barrier : 0) + (d.deathbind ? COST.deathbind : 0) + (d.rebirth ? COST.rebirth + (d.rebirth.splitAllowed ? 5 : 0) : 0) + (d.devotion ? COST.devotion : 0) + (d.seal ? COST.seal : 0) + (d.eagleHunt && d.transformation ? COST.eagleHunt : 0) + (d.demonContract && d.transformation ? COST.demonContract : 0);
+  n += (d.dark ? COST.dark : 0) + (d.barrier ? COST.barrier : 0) + (d.deathbind ? COST.deathbind : 0) + (d.rebirth ? COST.rebirth + (d.rebirth.splitAllowed ? 5 : 0) : 0) + (d.devotion ? COST.devotion : 0) + (d.seal ? COST.seal : 0) + (d.eagleHunt && d.transformation ? COST.eagleHunt : 0) + (d.demonContract && d.transformation ? COST.demonContract : 0) + (d.dogHunt && d.transformation ? COST.dogHunt : 0);
   if (d.rebirth?.enhancedPattern !== undefined && d.rebirth.enhancement) {
     const at = d.rebirth.enhancedAt;
     const active = at === "transformation"
@@ -423,7 +439,7 @@ export function cost(d: Definition) {
   }
   return Math.max(0, n);
 }
-function legacyCost(d: Definition) {
+function legacyCost(d: Definition, transformedContext = false) {
   const rangeCost: Record<Range, number> = { 1: 1, 2: 2, 3: 4, slide: 5 };
   const allyPremium: Record<Range, number> = { 1: 0, 2: 1, 3: 2, slide: 3 };
   const enemyPremium: Record<Range, number> = { 1: 0, 2: 2, 3: 4, slide: 6 };
@@ -437,6 +453,13 @@ function legacyCost(d: Definition) {
     if (p.kind === "leap") {
       const unit = usage === "move" ? 2 : 3;
       total += p.vectors.length * (p.initialOnly ? Math.ceil(unit / 2) : unit);
+      continue;
+    }
+    if (p.kind === "chain") {
+      const chargedChains = transformedContext ? Math.max(1, p.maxChains - 1) : p.maxChains;
+      let value = p.vectors.length * chargedChains * (chargedChains + 1) / 2;
+      if (p.initialOnly || p.evolvedInitialOnly) value = Math.ceil(value / 2);
+      total += value;
       continue;
     }
     const unit =
@@ -510,9 +533,10 @@ export function errors(d: Definition, all: Definition[] = [], evolvedContext = f
   if (n.zeroBody && (n.isCrown || n.rebirth || n.deathbind)) e.push("零体はCrown・再生・道連れと併用できません。");
   if (n.deathbind && (n.isCrown || n.rebirth)) e.push("道連れはCrown・再生と併用できません。");
   if (n.dark && n.isCrown) e.push("暗躍はCrown駒に設定できません。");
-  if ((n.eagleHunt || n.demonContract) && !n.growth && !n.transformation) e.push("契約能力には成長または変身が必要です。");
+  if ((n.eagleHunt || n.demonContract || n.dogHunt) && !n.growth && !n.transformation) e.push("契約能力には成長または変身が必要です。");
   if (n.eagleHunt && n.growth && !growthStages(n.growth).some((stage) => stage.eagleHunt)) e.push("鷹狩を発動する成長段階を指定してください。");
   if (n.demonContract && n.growth && !growthStages(n.growth).some((stage) => stage.demonContract)) e.push("魔神との契約を発動する成長段階を指定してください。");
+  if (n.dogHunt && n.growth && !growthStages(n.growth).some((stage) => stage.dogHunt)) e.push("犬猟を発動する成長段階を指定してください。");
   if (n.rebirth?.splitAllowed && n.summoning?.timing !== "split") e.push("分裂後再生は分裂召喚の駒だけに設定できます。");
   if (n.rebirth?.enhancement) {
     if (n.rebirth.enhancedPattern === undefined || !n.patterns[n.rebirth.enhancedPattern]) e.push("強化再生の対象移動セットが不正です。");
@@ -527,6 +551,10 @@ export function errors(d: Definition, all: Definition[] = [], evolvedContext = f
   if (n.patterns.some((p) => p.kind === "leap" && p.tracking && p.tracking.duration !== 1 && p.tracking.duration !== 2))
     e.push("追跡期限は1手または2手です。");
   if (n.patterns.some((p) => p.kind === "direction" && p.recoil && ((p.usage ?? "both") === "stationary" || p.cannon || p.phase === 2))) e.push("反動は静止捕獲・キャノン・2回目移動と併用できません。");
+  if (n.patterns.some((p) => p.kind === "chain" && !["move", "both"].includes(p.usage ?? "both"))) e.push("連鎖移動は移動専用または移動・捕獲だけ設定できます。");
+  if (n.patterns.some((p) => p.kind === "chain" && (p.phase === 2 || (p.secondTrigger && p.secondTrigger !== "normal")))) e.push("連鎖移動は2回目移動・捕獲後移動・飛翔に設定できません。");
+  if (n.patterns.some((p) => p.kind === "chain" && p.vectors.some((v) => Math.abs(v.dx) + Math.abs(v.dy) !== 1))) e.push("連鎖移動は前後左右だけ設定できます。");
+  if (!evolvedContext && n.patterns.some((p) => p.kind === "chain" && p.maxChains === 4 && !p.evolutionOnly)) e.push("4連鎖は成長・変身後限定です。");
   if (n.patterns.some((p) => p.secondTrigger === "after-capture" && ((p.usage ?? "both") !== "move" || p.phase !== 2)))
     e.push("捕獲後移動は2回目の移動専用セットに設定してください。");
   if (!evolvedContext && n.patterns.some((p) => p.phase === 2 && (p.secondTrigger ?? "normal") === "normal" && (p.usage ?? "both") !== "move"))
@@ -609,6 +637,7 @@ export function errors(d: Definition, all: Definition[] = [], evolvedContext = f
         e.push("捕獲解放は移動専用セットにだけ設定できます。");
       if (unlock.capture && unlock.stationary)
         e.push("通常捕獲と静止捕獲は同時解放できません。");
+      if (unlock.stationary && pattern.kind === "chain") e.push("連鎖移動には静止捕獲を成長解放できません。");
       if (unlock.vectors && pattern.kind !== "leap")
         e.push("成長後の跳躍点は固定跳躍セットにだけ設定できます。");
       if (unlock.range !== undefined && pattern.kind !== "direction")
@@ -617,6 +646,8 @@ export function errors(d: Definition, all: Definition[] = [], evolvedContext = f
         const rank = (range: Range) => range === "slide" ? 4 : range;
         if (rank(unlock.range) < rank(pattern.range)) e.push("成長後の移動距離は短くできません。");
       }
+      if (unlock.maxChains !== undefined && pattern.kind !== "chain") e.push("最大連鎖数の解放は連鎖移動セットにだけ設定できます。");
+      if (unlock.maxChains !== undefined && pattern.kind === "chain" && unlock.maxChains <= pattern.maxChains) e.push("成長後の最大連鎖数は増加させてください。");
       if (unlock.vectors?.some((vector) => Math.abs(vector.dx) > 3 || Math.abs(vector.dy) > 3 || (!vector.dx && !vector.dy)))
         e.push("成長後の固定跳躍点は7×7範囲内に設定してください。");
       if ((unlock.cannon || unlock.jumpAllies || unlock.jumpEnemies) && pattern.kind !== "direction")
@@ -679,7 +710,7 @@ export function errors(d: Definition, all: Definition[] = [], evolvedContext = f
       true,
     ).filter((message) => !message.includes("記号") && !message.includes("進化限定"));
     e.push(...transformedPatternErrors.map((message) => `変身後：${message}`));
-    const transformedCost = cost(transformed) + (n.transformation.localSwap ? 3 : 0) + (n.transformation.globalSwap ? 5 : 0);
+    const transformedCost = cost(transformed, true) + (n.transformation.localSwap ? 3 : 0) + (n.transformation.globalSwap ? 5 : 0);
     if (transformedCost > transformationLimit(n))
       e.push(`変身後コストが上限${transformationLimit(n)}を超えています。`);
   }

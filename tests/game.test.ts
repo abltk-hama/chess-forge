@@ -484,6 +484,58 @@ describe("new movement abilities", () => {
     turn: "white",
   });
 
+  it("hound chain allows a right angle but rejects an immediate reverse", () => {
+    const s = customMatch({ id: "unused", name: "Unused", symbol: "UN", isCrown: false, patterns: [{ kind: "direction", vectors: [{ dx: 1, dy: 0 }], range: 1 }] });
+    s.board[idx({ row: 4, col: 4 })] = { id: "dog", color: "white", role: "hound", moved: false, dogTraining: "coordination" };
+    const chains = legal(s, { row: 4, col: 4 }, []);
+    expect(chains.some((move) => move.chain?.length === 2 && move.chain[0].to.col === 5 && move.chain[1].to.row === 3 && move.chain[1].to.col === 5)).toBe(true);
+    expect(chains.some((move) => move.chain?.length === 2 && move.chain[0].to.col === 5 && move.chain[1].to.col === 4)).toBe(false);
+  });
+
+  it("custom chain movement supports early stop, same direction and right turns", () => {
+    const definition: Definition = { id: "chain", name: "Chain", symbol: "CH", isCrown: false, patterns: [{ kind: "chain", vectors: [{ dx: 0, dy: -1 }, { dx: 1, dy: 0 }, { dx: 0, dy: 1 }, { dx: -1, dy: 0 }], maxChains: 3, usage: "both" }] };
+    const s = customMatch(definition);
+    s.board[idx({ row: 4, col: 4 })] = { id: "chain-piece", color: "white", role: "custom", definitionId: definition.id, moved: false };
+    const moves = legal(s, { row: 4, col: 4 }, [definition]);
+    expect(moves.some((move) => move.chain?.length === 1)).toBe(true);
+    expect(moves.some((move) => move.chain?.length === 3 && move.chain.every((step) => step.to.col === 4))).toBe(true);
+    expect(moves.some((move) => move.chain?.length === 2 && move.chain[0].to.row === 3 && move.chain[1].to.col === 5)).toBe(true);
+    expect(moves.some((move) => move.chain?.length === 2 && move.chain[0].to.row === 3 && move.chain[1].to.row === 4)).toBe(false);
+  });
+
+  it("custom chain movement stops on capture and move-only chains cannot capture", () => {
+    const both: Definition = { id: "chain-both", name: "Chain Both", symbol: "CB", isCrown: false, patterns: [{ kind: "chain", vectors: [{ dx: 0, dy: -1 }], maxChains: 3, usage: "both" }] };
+    const s = customMatch(both);
+    s.board[idx({ row: 5, col: 4 })] = { id: "chain-piece", color: "white", role: "custom", definitionId: both.id, moved: false };
+    s.board[idx({ row: 3, col: 4 })] = { id: "target", color: "black", role: "pawn", moved: false };
+    const captures = legal(s, { row: 5, col: 4 }, [both]).filter((move) => move.chain?.some((step) => step.to.row === 3 && step.to.col === 4));
+    expect(captures.some((move) => move.chain?.length === 2)).toBe(true);
+    expect(captures.some((move) => (move.chain?.length ?? 0) > 2)).toBe(false);
+    const moveOnly: Definition = { ...both, id: "chain-move", patterns: [{ ...both.patterns[0], usage: "move" }] };
+    s.board[idx({ row: 5, col: 4 })] = { id: "chain-piece", color: "white", role: "custom", definitionId: moveOnly.id, moved: false };
+    expect(legal(s, { row: 5, col: 4 }, [moveOnly]).some((move) => move.chain?.some((step) => step.to.row === 3 && step.to.col === 4))).toBe(false);
+  });
+
+  it("hunting hound requires an exit after a fourth-chain capture when one is available", () => {
+    const s = customMatch({ id: "unused", name: "Unused", symbol: "UN", isCrown: false, patterns: [{ kind: "direction", vectors: [{ dx: 1, dy: 0 }], range: 1 }] });
+    s.board[idx({ row: 4, col: 1 })] = { id: "dog", color: "white", role: "hound", moved: false, dogTraining: "hunting" };
+    s.board[idx({ row: 4, col: 5 })] = { id: "target", color: "black", role: "pawn", moved: false };
+    const moves = legal(s, { row: 4, col: 1 }, []);
+    const fourthCaptures = moves.filter((move) => move.chain?.[3]?.to.row === 4 && move.chain[3].to.col === 5);
+    expect(fourthCaptures.length).toBeGreaterThan(0);
+    expect(fourthCaptures.every((move) => move.chain?.length === 5)).toBe(true);
+  });
+
+  it("rejects a hound chain whose final special step exposes its king", () => {
+    const s = customMatch({ id: "unused", name: "Unused", symbol: "UN", isCrown: false, patterns: [{ kind: "direction", vectors: [{ dx: 1, dy: 0 }], range: 1 }] });
+    s.preset = "classic";
+    s.board[idx({ row: 7, col: 4 })] = { id: "king", color: "white", role: "king", moved: false };
+    s.board[idx({ row: 6, col: 4 })] = { id: "dog", color: "white", role: "hound", moved: false, dogTraining: "hunting" };
+    s.board[idx({ row: 0, col: 4 })] = { id: "rook", color: "black", role: "rook", moved: false };
+    const moves = legal(s, { row: 6, col: 4 }, []);
+    expect(moves.some((move) => move.chain?.[0]?.to.col !== 4)).toBe(false);
+  });
+
   it("pass-through can either leave or capture a passed enemy while landing beyond it", () => {
     const definition: Definition = { id: "pass", name: "Pass", symbol: "PS", isCrown: false, patterns: [{ kind: "direction", vectors: [{ dx: 0, dy: -1 }], range: "slide", passEnemies: 1 }] };
     const s = customMatch(definition);

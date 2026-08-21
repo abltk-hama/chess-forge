@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import {
+  cost,
   definitionCost,
   directionCostBreakdown,
   evolvedDefinition,
@@ -118,6 +119,7 @@ const usesLegacyJump = (definition: Definition) =>
       pattern.jumpEnemies === undefined,
   );
 const dirNames = ["前", "前右", "右", "後右", "後", "後左", "左", "前左"];
+const chainDirectionIndexes = [0, 2, 4, 6] as const;
 const knightVectors: Vec[] = [
   { dx: 1, dy: 2 },
   { dx: 2, dy: 1 },
@@ -365,12 +367,15 @@ function TransformationPatterns({
                         range: 1,
                         usage: "both",
                       }
-                    : { kind: "leap", vectors: [], usage: "both" },
+                    : event.target.value === "chain"
+                      ? { kind: "chain", vectors: [], maxChains: 2, usage: "both" }
+                      : { kind: "leap", vectors: [], usage: "both" },
                 )
               }
             >
               <option value="direction">方向移動</option>
               <option value="leap">固定跳躍</option>
+              <option value="chain">連鎖移動</option>
             </select>
           </label>
           <label>
@@ -378,6 +383,7 @@ function TransformationPatterns({
             <select
               aria-label={`変身後セット${index + 1}の用途`}
               value={pattern.usage ?? "both"}
+              disabled={pattern.kind === "chain"}
               onChange={(event) =>
                 update(index, {
                   ...pattern,
@@ -534,6 +540,17 @@ function TransformationPatterns({
                 />
                 キャノン捕獲
               </label>
+            </>
+          ) : pattern.kind === "chain" ? (
+            <>
+              <label>最大連鎖数<select value={pattern.maxChains} onChange={(event) => update(index, { ...pattern, maxChains: Number(event.target.value) as 2 | 3 | 4 })}><option value="2">2連鎖</option><option value="3">3連鎖</option><option value="4">4連鎖</option></select></label>
+              <div className="checks">
+                {chainDirectionIndexes.map((directionIndex) => {
+                  const vector = directions[directionIndex];
+                  return <button type="button" className={pattern.vectors.some((item) => item.dx === vector.dx && item.dy === vector.dy) ? "active" : ""} onClick={() => toggleVector(index, vector)} key={directionIndex}>{dirNames[directionIndex]}</button>;
+                })}
+              </div>
+              <p>変身後料金は実連鎖数−1で計算します。</p>
             </>
           ) : (
             <>
@@ -736,6 +753,8 @@ function Editor({
                               jumpAllies: 0,
                               jumpEnemies: 0,
                             }
+                          : x.target.value === "chain"
+                            ? { kind: "chain", vectors: [], maxChains: 2, usage: "both", initialOnly: false }
                           : {
                               kind: "leap",
                               vectors: [],
@@ -747,6 +766,7 @@ function Editor({
                   >
                     <option value="direction">方向移動</option>
                     <option value="leap">固定跳躍</option>
+                    <option value="chain">連鎖移動</option>
                   </select>
                   <button
                     disabled={d.patterns.length === 1}
@@ -802,13 +822,14 @@ function Editor({
                   >
                     <option value="both">移動・捕獲</option>
                     <option value="move">移動専用</option>
-                    <option value="capture">捕獲専用</option>
-                    <option value="stationary">静止捕獲</option>
+                    {pattern.kind !== "chain" && <option value="capture">捕獲専用</option>}
+                    {pattern.kind !== "chain" && <option value="stationary">静止捕獲</option>}
                   </select>
                 </label>
                 <label>
                   移動回数
                   <select
+                    disabled={pattern.kind === "chain"}
                     aria-label={`移動セット${index + 1}の移動回数`}
                     value={pattern.phase ?? 1}
                     onChange={(event) =>
@@ -994,6 +1015,17 @@ function Editor({
                     <label><input type="checkbox" disabled={pattern.range === 1} checked={!!pattern.charge} onChange={(event) => updatePattern(index, { ...pattern, charge: event.target.checked })} />突進（最遠停止・距離コスト軽減）</label>
                     <label><input type="checkbox" disabled={(pattern.usage ?? "both") === "stationary" || !!pattern.cannon || pattern.phase === 2} checked={!!pattern.recoil} onChange={(event) => updatePattern(index, { ...pattern, recoil: event.target.checked })} />反動捕獲 (+3)</label>
                   </>
+                ) : pattern.kind === "chain" ? (
+                  <>
+                    <label>最大連鎖数<select value={pattern.maxChains} onChange={(event) => updatePattern(index, { ...pattern, maxChains: Number(event.target.value) as 2 | 3 | 4, evolutionOnly: event.target.value === "4" ? true : pattern.evolutionOnly })}><option value="2">2連鎖</option><option value="3">3連鎖</option><option value="4">4連鎖（成長・変身後限定）</option></select></label>
+                    <div className="checks">
+                      {chainDirectionIndexes.map((directionIndex) => {
+                        const vector = directions[directionIndex];
+                        return <button className={pattern.vectors.some((item) => item.dx === vector.dx && item.dy === vector.dy) ? "active" : ""} onClick={() => toggle(index, vector)} key={directionIndex}>{dirNames[directionIndex]}</button>;
+                      })}
+                    </div>
+                    <p>1連鎖1マス。直前方向の逆は禁止。捕獲すると連鎖を終了します。</p>
+                  </>
                 ) : (
                   <>
                     <p>到達地点を選択（移動専用+2、その他+3／地点）</p>
@@ -1133,6 +1165,8 @@ function Editor({
             <label><input type="checkbox" checked={!!d.eagleHunt} onChange={(event) => setD({ ...d, eagleHunt: event.target.checked, eagleTraining: event.target.checked ? (d.eagleTraining ?? "coordination") : undefined })} />鷹狩 (+5・成長/変身限定)</label>
             {d.eagleHunt && <label>育成方式<select value={d.eagleTraining ?? "coordination"} onChange={(event) => setD({ ...d, eagleTraining: event.target.value as "coordination" | "hunting" | "support" })}><option value="coordination">連携型：契約者と位置交換</option><option value="hunting">狩猟型：契約者周辺へ移動捕獲</option><option value="support">援護型：位置交換＋同色マス静止捕獲</option></select></label>}
             <label><input type="checkbox" checked={!!d.demonContract} onChange={(event) => setD({ ...d, demonContract: event.target.checked })} />魔神との契約 (+3・成長/変身限定)</label>
+            <label><input type="checkbox" checked={!!d.dogHunt} onChange={(event) => setD({ ...d, dogHunt: event.target.checked, dogTraining: event.target.checked ? (d.dogTraining ?? "hunting") : undefined })} />犬猟 (+5・成長/変身限定)</label>
+            {d.dogHunt && <label>育成方式<select value={d.dogTraining ?? "hunting"} onChange={(event) => setD({ ...d, dogTraining: event.target.value as "hunting" | "coordination" | "scouting" })}><option value="hunting">狩猟型：加速・捕獲特化</option><option value="coordination">連携型：通常連鎖</option><option value="scouting">索敵型：移動専用・加速</option></select></label>}
           </fieldset>
           <fieldset className="pattern-card growth-card">
             <legend>成長</legend>
@@ -1272,6 +1306,7 @@ function Editor({
                 {d.zeroBody && growthStageIndex === 1 && <label><input type="checkbox" checked={!!activeGrowthStage.overcomeZero} onChange={(event) => writeGrowthStage(growthStageIndex, { ...activeGrowthStage, overcomeZero: event.target.checked, zeroRecovery: 0 })} />零体の寿命を克服 (+15)</label>}
                 {d.eagleHunt && <label><input type="checkbox" checked={!!activeGrowthStage.eagleHunt} onChange={(event) => writeGrowthStage(growthStageIndex, { ...activeGrowthStage, eagleHunt: event.target.checked })} />この段階で鷹狩を発動</label>}
                 {d.demonContract && <label><input type="checkbox" checked={!!activeGrowthStage.demonContract} onChange={(event) => writeGrowthStage(growthStageIndex, { ...activeGrowthStage, demonContract: event.target.checked })} />この段階で魔神との契約を発動</label>}
+                {d.dogHunt && <label><input type="checkbox" checked={!!activeGrowthStage.dogHunt} onChange={(event) => writeGrowthStage(growthStageIndex, { ...activeGrowthStage, dogHunt: event.target.checked })} />この段階で犬猟を発動</label>}
                 {d.patterns.map((pattern, index) => {
                   const unlock = activeGrowthStage.unlocks[index] ?? {};
                   const moveOnly = (pattern.usage ?? "both") === "move";
@@ -1299,7 +1334,7 @@ function Editor({
                       <label>
                         <input
                           type="checkbox"
-                          disabled={!moveOnly || !!unlock.capture}
+                          disabled={pattern.kind === "chain" || !moveOnly || !!unlock.capture}
                           checked={!!unlock.stationary}
                           onChange={(event) =>
                             updateUnlock(index, {
@@ -1325,6 +1360,16 @@ function Editor({
                           >
                             {[1, 2, 3].filter((value) => typeof pattern.range === "number" && value >= pattern.range).map((value) => <option value={value} key={value}>{value}</option>)}
                             <option value="slide">スライド</option>
+                          </select>
+                        </label>
+                      )}
+                      {pattern.kind === "chain" && (
+                        <label>
+                          成長後の最大連鎖数
+                          <select aria-label={`移動セット${index + 1}の成長後最大連鎖数`} value={unlock.maxChains ?? pattern.maxChains} onChange={(event) => updateUnlock(index, { maxChains: Number(event.target.value) as 2 | 3 | 4 })}>
+                            {pattern.maxChains <= 2 && <option value="2">2連鎖</option>}
+                            {pattern.maxChains <= 3 && <option value="3">3連鎖</option>}
+                            <option value="4">4連鎖</option>
                           </select>
                         </label>
                       )}
@@ -1529,6 +1574,7 @@ function Editor({
             <p>Range基本：R1 +0 / R2 +2 / R3 +5 / Slide +10（最高Rangeのみ）</p>
             <p>Usage：R1は追加なし、R2以上は移動0・捕獲1・静止1・両方2</p>
             <p>Usage財布：上限20、評価値 R1=1 / R2=2 / R3=4 / Slide=6</p>
+            <p>連鎖Usage：移動0 / 両方2×実連鎖数（同じUsage財布から支払い）</p>
             <p>方向 {directionPricing.moveDirection} + Range {directionPricing.rangeBase} + Usage実課金 {directionPricing.usageCharge} = {directionPricing.total}</p>
             <p>財布残高 {directionPricing.usageWallet} / 20（評価値 {directionPricing.rangeEvaluation}、Usage {directionPricing.usage}）</p>
           </details>
@@ -1547,7 +1593,7 @@ function Editor({
           {d.transformation && (
             <p>
               変身前 {definitionCost(d)}／30・変身後{" "}
-              {definitionCost(transformedDefinition(d)) + (d.transformation.localSwap ? 3 : 0) + (d.transformation.globalSwap ? 5 : 0)}/
+              {cost(transformedDefinition(d), true) + (d.transformation.localSwap ? 3 : 0) + (d.transformation.globalSwap ? 5 : 0)}/
               {transformationLimit(d)}
             </p>
           )}
@@ -1645,6 +1691,26 @@ function Preview({ d }: { d: Definition }) {
     }
   >();
   for (const p of d.patterns)
+    if (p.kind === "chain") {
+      const seen = new Set<string>();
+      const visit = (row: number, col: number, depth: number, previous?: Vec) => {
+        if (depth >= p.maxChains) return;
+        for (const v of p.vectors) {
+          if (previous && v.dx === -previous.dx && v.dy === -previous.dy) continue;
+          const nextRow = row + v.dy, nextCol = col + v.dx;
+          if (Math.abs(nextRow) > 3 || Math.abs(nextCol) > 3) continue;
+          const key = `${nextRow},${nextCol}`;
+          const target = targets.get(key) ?? { move: false, capture: false, stationary: false, leap: false, initial: false, cannon: false };
+          target.move = true;
+          target.capture ||= (p.usage ?? "both") === "both";
+          target.initial ||= !!p.initialOnly || !!p.evolvedInitialOnly;
+          targets.set(key, target);
+          const stateKey = `${nextRow},${nextCol},${depth + 1},${v.dx},${v.dy}`;
+          if (!seen.has(stateKey)) { seen.add(stateKey); visit(nextRow, nextCol, depth + 1, v); }
+        }
+      };
+      visit(0, 0, 0);
+    } else
     for (const v of p.vectors) {
       const max = p.kind === "leap" ? 1 : p.range === "slide" ? 3 : p.range;
       for (let n = 1; n <= max; n++) {
@@ -2418,6 +2484,8 @@ function Game({
     import("./domain/types").Move[] | null
   >(null);
   const [passChoice, setPassChoice] = useState<import("./domain/types").Move[] | null>(null);
+  const [chainChoices, setChainChoices] = useState<import("./domain/types").Move[] | null>(null);
+  const [chainDepth, setChainDepth] = useState(0);
   const [thinking, setThinking] = useState(false);
   const [aiError, setAiError] = useState("");
   const [paused, setPaused] = useState(false), [stepRequested, setStepRequested] = useState(false), [watchSpeed, setWatchSpeed] = useState<0 | 400 | 1000>(400);
@@ -2506,6 +2574,8 @@ function Game({
       ? pending
           .filter((m) => m.next)
           .map((m) => `${m.next!.to.row},${m.next!.to.col}`)
+      : chainChoices
+      ? chainChoices.filter((m) => (m.chain?.length ?? 0) > chainDepth).map((m) => `${m.chain![chainDepth].to.row},${m.chain![chainDepth].to.col}`)
       : moves.map((m) => `${m.to.row},${m.to.col}`),
   );
   const localSwapTargets = new Set(moves.filter((move) => move.swap === "local").map((move) => `${move.to.row},${move.to.col}`));
@@ -2551,6 +2621,11 @@ function Game({
       if (match.pendingRebirth.candidates.some((candidate) => candidate.row === p.row && candidate.col === p.col)) setMatch(placeRebirth(match, p));
       return;
     }
+    if (chainChoices) {
+      const next = chainChoices.filter((move) => move.chain?.[chainDepth]?.to.row === p.row && move.chain?.[chainDepth]?.to.col === p.col);
+      if (next.length) { setChainChoices(next); setChainDepth(chainDepth + 1); return; }
+      return;
+    }
     if (!pending && inspected?.row === p.row && inspected.col === p.col) {
       setSelected(null);
       setInspected(null);
@@ -2578,6 +2653,11 @@ function Game({
         (m) => m.to.row === p.row && m.to.col === p.col,
       );
       if (candidates.length) {
+        if (candidates.some((move) => move.chain)) {
+          setChainChoices(candidates.filter((move) => move.chain));
+          setChainDepth(1);
+          return;
+        }
         const continuation = candidates.filter((move) => move.next);
         if (continuation.length) {
           setPending(candidates);
@@ -2607,7 +2687,8 @@ function Game({
           {pending && (
             <p>{pending.some((move) => move.transit) ? "飛翔の着地点を選んでください。中継地点の駒は捕獲しません。" : "2回目の移動先を選ぶか、「ここで手番終了」を選択してください。"}</p>
           )}
-          {match.pendingContract && <p>{match.pendingContract.kind === "raptor" ? "鷲系" : match.pendingContract.kind === "crow" ? "鴉" : "魔神"}の配置先を選んでください。</p>}
+          {chainChoices && <p>連鎖移動：次の移動先を選ぶか、「ここで手番終了」を選択してください。</p>}
+          {match.pendingContract && <p>{match.pendingContract.kind === "raptor" ? "鷲系" : match.pendingContract.kind === "crow" ? "鴉" : match.pendingContract.kind === "hound" ? "猟犬" : match.pendingContract.kind === "boar" ? "猪" : match.pendingContract.kind === "piglet" ? "うり坊" : "魔神"}の配置先を選んでください。</p>}
           {match.pendingSummon && <p>派生駒の配置先を選んでください（残り{match.pendingSummon.remaining}体）。</p>}
           {match.pendingRebirth && match.pendingRebirth.owner === match.turn && <p>再生する駒の配置先を選んでください。</p>}
           {passChoice && <div className="pass-choice"><span>通過した敵駒を捕獲しますか？</span> <button onClick={() => { setMatch(play(match, passChoice.find((move) => move.passCaptureAt)!, defs)); setPassChoice(null); setSelected(null); setInspected(null); }}>捕獲する</button> <button onClick={() => { setMatch(play(match, passChoice.find((move) => !move.passCaptureAt)!, defs)); setPassChoice(null); setSelected(null); setInspected(null); }}>移動のみ</button> <button onClick={() => setPassChoice(null)}>キャンセル</button></div>}
@@ -2716,6 +2797,15 @@ function Game({
             if (inspectedPiece.role === "raptor") statuses.push(`鷹狩・${inspectedPiece.eagleTraining === "hunting" ? "狩猟型" : inspectedPiece.eagleTraining === "support" ? "援護型" : "連携型"}`, inspectedPiece.eagleTraining === "hunting" ? "契約者周辺へ距離・色無視の移動捕獲" : inspectedPiece.eagleTraining === "support" ? "契約者と位置交換＋契約者周辺の同色マスへ静止捕獲" : "契約者と位置交換", "通常移動：同色マス12点への固定跳躍");
             if (inspectedPiece.role === "crow") statuses.push("鴉：8方向へ最大3マス移動・捕獲");
             if (inspectedPiece.role === "demon") statuses.push("魔神：周囲8マスへ最大2回移動・1手1捕獲", inspectedPiece.demonTurns === undefined ? "寿命なし" : `残り寿命 ${inspectedPiece.demonTurns}自手番`);
+            if (inspectedPiece.role === "hound") statuses.push(`猟犬・${inspectedPiece.dogTraining === "hunting" ? "狩猟型" : inspectedPiece.dogTraining === "scouting" ? "索敵型" : "連携型"}`, "直交方向へ最大3連鎖。直前の逆方向には進めません。");
+            if (inspectedPiece.role === "boar") statuses.push("猪：前後Slide・前斜め最大3マスの突進、捕獲後は1マス反動");
+            if (inspectedPiece.role === "piglet") statuses.push("うり坊：前後最大2マス。紐付いた猪の死亡・2捕獲、または自身の捕獲で猪化");
+            if (inspectedPiece.role === "hound") {
+              const watches = (match.dogWatches ?? []).filter((item) => item.houndId === inspectedPiece.id);
+              const tracks = (match.dogTracks ?? []).filter((item) => item.houndId === inspectedPiece.id);
+              if (watches.length) statuses.push(`監視中：${watches.length}体（相手が移動すると追跡対象）`);
+              if (tracks.length) statuses.push(`追跡対象：${tracks.length}体${tracks.some((item) => item.remaining) ? "（この手番まで）" : ""}`);
+            }
             return statuses.length ? <div className="piece-status"><strong>{inspectedPiece.contractName ?? pieceText(inspectedPiece, defs)}</strong>{statuses.map((status) => <p key={status}>{status}</p>)}</div> : null;
           })()}
           {inspectedPiece && (() => {
@@ -2738,6 +2828,14 @@ function Game({
             }
             const watched = (match.trackingWatches ?? []).filter((item) => item.trackerId === inspectedPiece.id);
             if (watched.length) statuses.push(`監視中：${watched.length}体`);
+            const dogWatches = (match.dogWatches ?? []).filter((item) => item.ownerId === inspectedPiece.id);
+            const dogTracks = (match.dogTracks ?? []).filter((item) => item.ownerId === inspectedPiece.id);
+            if (dogWatches.length) statuses.push(`猟犬の監視中：${dogWatches.length}体`);
+            if (dogTracks.length) statuses.push(`猟犬の${dogTracks.some((item) => item.shared) ? "共有済み追跡" : "追跡"}対象：${dogTracks.length}体`);
+            for (const item of dogTracks) {
+              const target = match.board.find((piece) => piece?.id === item.targetId);
+              if (target) statuses.push(`猟犬対象：${pieceText(target, defs)}${item.shared ? "（共有済み）" : ""}`);
+            }
             return statuses.length ? (
               <div className="piece-status"><strong>駒の状態</strong>{statuses.map((status) => <p key={status}>{status}</p>)}</div>
             ) : null;
@@ -2781,6 +2879,9 @@ function Game({
             >
               ここで手番終了
             </button>
+          )}
+          {chainChoices && chainChoices.some((move) => (move.chain?.length ?? 0) === chainDepth) && (
+            <button onClick={() => { const move = chainChoices.find((item) => (item.chain?.length ?? 0) === chainDepth)!; setMatch(play(match, move, defs)); setChainChoices(null); setChainDepth(0); setSelected(null); setInspected(null); }}>ここで手番終了</button>
           )}
           <details className="game-panel-section" open>
             <summary>

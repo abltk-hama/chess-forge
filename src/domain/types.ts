@@ -9,6 +9,9 @@ export type Role =
   | "raptor"
   | "crow"
   | "demon"
+  | "hound"
+  | "boar"
+  | "piglet"
   | "custom";
 export type Preset = "classic" | "royal-any" | "royal-all";
 export type Range = 1 | 2 | 3 | "slide";
@@ -37,6 +40,8 @@ export interface GrowthUnlock {
   jumpEnemies?: 0 | 1 | 2;
   /** Fixed-leap destinations after this stage. Same-size relocation is free. */
   vectors?: Vec[];
+  /** 連鎖移動の最大連鎖数。4は成長後のみ解放できる。 */
+  maxChains?: 2 | 3 | 4;
 }
 export interface GrowthStage {
   condition: EvolutionCondition;
@@ -51,6 +56,7 @@ export interface GrowthStage {
   /** この段階到達時に鷲狩を一度だけ発動する。 */
   eagleHunt?: boolean;
   demonContract?: boolean;
+  dogHunt?: boolean;
 }
 export interface Growth {
   condition: EvolutionCondition;
@@ -70,6 +76,7 @@ export interface Transformation {
   globalSwap?: boolean;
   eagleHunt?: boolean;
   demonContract?: boolean;
+  dogHunt?: boolean;
 }
 export interface Summoning {
   condition: EvolutionCondition;
@@ -132,7 +139,21 @@ export interface Leap {
   /** 固定跳躍の射程から逃げた敵を追跡する。通常形態では移動専用セットのみ設定可能。 */
   tracking?: { duration: 1 | 2 };
 }
-export type Pattern = Direction | Leap;
+export interface Chain {
+  kind: "chain";
+  /** 駒から見た前後左右。斜め方向は使用しない。 */
+  vectors: Vec[];
+  maxChains: 2 | 3 | 4;
+  usage?: Usage;
+  initialOnly?: boolean;
+  evolvedInitialOnly?: boolean;
+  evolutionOnly?: boolean;
+  /** Chainは常に第1移動。互換データの検証用に保持する。 */
+  secondTrigger?: "normal" | "after-capture" | "flight";
+  phase?: 1 | 2;
+  growthStationaryBase?: boolean;
+}
+export type Pattern = Direction | Leap | Chain;
 export interface Definition {
   id: string;
   name: string;
@@ -162,6 +183,8 @@ export interface Definition {
   eagleHunt?: boolean;
   eagleTraining?: "coordination" | "hunting" | "support";
   demonContract?: boolean;
+  dogHunt?: boolean;
+  dogTraining?: "hunting" | "coordination" | "scouting";
 }
 export interface Piece {
   id: string;
@@ -186,6 +209,12 @@ export interface Piece {
   eagleOwnerId?: string;
   eagleHuntUsed?: boolean;
   demonContractUsed?: boolean;
+  dogHuntUsed?: boolean;
+  dogOwnerId?: string;
+  dogTraining?: "hunting" | "coordination" | "scouting";
+  dogHuntId?: string;
+  boarId?: string;
+  boarCaptures?: number;
   eagleTraining?: "coordination" | "hunting" | "support";
   contractName?: string;
   demonTurns?: number;
@@ -205,6 +234,10 @@ export interface Move {
   recoilTo?: Pos;
   /** Enemy removed while landing beyond it with pass-through capture. */
   passCaptureAt?: Pos;
+  /** 連鎖移動を構成する順序付きの短距離移動。 */
+  chain?: Move[];
+  /** 捕獲後の強制連鎖が残っており、この経路では終了できない。 */
+  chainRequired?: boolean;
 }
 export interface Setup {
   rook: string | null;
@@ -227,7 +260,7 @@ export interface Match {
   message: string;
   pendingSummon?: { owner: Color; definitionId: string; origin: Pos; remaining: number; candidates: Pos[] };
   pendingRebirth?: { owner: Color; piece: Piece; origin: Pos; candidates: Pos[] };
-  pendingContract?: { kind: "raptor" | "crow" | "demon-own" | "demon-foe"; owner: Color; contractorId?: string; training?: "coordination" | "hunting" | "support"; origin: Pos; candidates: Pos[]; nextCandidates?: Pos[]; followupDemon?: boolean };
+  pendingContract?: { kind: "raptor" | "crow" | "demon-own" | "demon-foe" | "hound" | "boar" | "piglet"; owner: Color; contractorId?: string; training?: "coordination" | "hunting" | "support" | "scouting"; huntId?: string; origin: Pos; candidates: Pos[]; nextCandidates?: Pos[]; followupDemon?: boolean };
   sealTurn?: number;
   ply?: number;
   /** Version 1 compatibility: ID of the piece that moved on the immediately preceding turn. */
@@ -236,6 +269,10 @@ export interface Match {
   trackingWatches?: { trackerId: string; patternIndex: number; targetId: string; duration: 1 | 2 }[];
   /** 監視対象が射程外へ逃げたことで成立した追跡対象。remaining は使用可能な自手番数。 */
   trackingTargets?: { trackerId: string; targetId: string; remaining: 1 | 2 }[];
+  /** 犬猟専用の近接追跡。shared は索敵結果が契約者へ共有済みであることを表す。 */
+  dogTracks?: { huntId: string; houndId: string; ownerId: string; targetId: string; shared: boolean; remaining?: 1 }[];
+  /** 連携型の監視開始位置。相手手番で対象が動いた時だけ追跡対象へ昇格する。 */
+  dogWatches?: { huntId: string; houndId: string; ownerId: string; targetId: string; row: number; col: number }[];
   stats?: Record<
     Color,
     { captures: number; losses: number; evolutions: number; kingDepth: number }

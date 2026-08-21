@@ -33,6 +33,9 @@ const standardValue: Record<
   raptor: 900,
   crow: 750,
   demon: 1000,
+  hound: 450,
+  boar: 500,
+  piglet: 175,
 };
 
 function activeDefinition(piece: Piece, definition: Definition) {
@@ -84,6 +87,19 @@ function conditionProgress(condition: EvolutionCondition, piece: Piece, position
 
 const capturedPiece = (match: Match, move: Move) => {
   if (move.swap) return null;
+  if (move.chain?.length) {
+    let state = match;
+    for (const step of move.chain) {
+      const captured = step.passCaptureAt
+        ? state.board[idx(step.passCaptureAt)]
+        : step.swap || step.transit || step.stationary
+          ? null
+          : state.board[idx(step.to)];
+      if (captured) return captured;
+      state = playFirst(state, step);
+    }
+    return null;
+  }
   const afterFirst = move.next ? playFirst(match, move) : null;
   return move.next
     ? (afterFirst!.board[idx(move.next.to)] ?? match.board[idx(move.to)])

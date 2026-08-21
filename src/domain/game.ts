@@ -35,6 +35,9 @@ const label: Record<Exclude<Role, "custom">, string> = {
   raptor: "RA",
   crow: "CR",
   demon: "DM",
+  hound: "HD",
+  boar: "BR",
+  piglet: "PG",
 };
 const at = (s: Match, p: Pos) => (inside(p) ? s.board[idx(p)] : null);
 const eq = (a: Pos, b: Pos) => a.row === b.row && a.col === b.col;
@@ -270,6 +273,24 @@ function standard(s: Match, from: Pos, p: Piece): Move[] {
   if (p.role === "raptor") return rays(s, from, p.color, [{ dx: -2, dy: -2 }, { dx: 0, dy: -2 }, { dx: 2, dy: -2 }, { dx: -1, dy: -1 }, { dx: 1, dy: -1 }, { dx: -2, dy: 0 }, { dx: 2, dy: 0 }, { dx: -1, dy: 1 }, { dx: 1, dy: 1 }, { dx: -2, dy: 2 }, { dx: 0, dy: 2 }, { dx: 2, dy: 2 }], 1, 2, 2);
   if (p.role === "crow") return rays(s, from, p.color, directions, 3);
   if (p.role === "demon") return rays(s, from, p.color, directions, 1);
+  if (p.role === "hound") return rays(s, from, p.color, orth, 1);
+  if (p.role === "boar") {
+    // 猪の前方は所有者から敵陣へ向かう向き。黒は画面下、白は画面上。
+    const forward = p.color === "black" ? 1 : -1;
+    const moves = [
+      ...rays(s, from, p.color, [{ dx: 0, dy: -1 }, { dx: 0, dy: 1 }], 7, 0, 0, "both", { charge: true }),
+      ...rays(s, from, p.color, [{ dx: -1, dy: forward }, { dx: 1, dy: forward }], 3, 0, 0, "both", { charge: true }),
+    ];
+    return moves.filter((move) => {
+      if (!at(s, move.to)) return true;
+      const dx = Math.sign(move.to.col - from.col), dy = Math.sign(move.to.row - from.row);
+      const recoilTo = { row: move.to.row - dy, col: move.to.col - dx };
+      if (!eq(recoilTo, from) && at(s, recoilTo)) return false;
+      move.recoilTo = recoilTo;
+      return true;
+    });
+  }
+  if (p.role === "piglet") return rays(s, from, p.color, [{ dx: 0, dy: -1 }, { dx: 0, dy: 1 }], 2);
   return [];
 }
 export function pseudo(
@@ -283,6 +304,14 @@ export function pseudo(
   if (!p) return [];
   if (p.role !== "custom") {
     const base = standard(s, from, p);
+    if (p.role === "hound" && p.dogTraining === "coordination") {
+      const ownerIndex = s.board.findIndex((piece) => piece?.id === p.dogOwnerId);
+      const enemyNear = s.board.some((piece, index) => piece?.color === other(p.color) && Math.max(Math.abs(Math.floor(index / 8) - from.row), Math.abs(index % 8 - from.col)) <= 2);
+      if (ownerIndex < 0 || !enemyNear) return base;
+      const owner = { row: Math.floor(ownerIndex / 8), col: ownerIndex % 8 };
+      const returns: Move[] = directions.map((v) => ({ row: owner.row + v.dy, col: owner.col + v.dx })).filter((to) => inside(to) && !at(s, to)).map((to) => ({ from, to }));
+      return [...base, ...returns];
+    }
     if (p.role !== "raptor") return base;
     const ownerIndex = s.board.findIndex((piece) => piece?.id === p.eagleOwnerId);
     if (ownerIndex < 0) return base;
@@ -322,6 +351,16 @@ export function pseudo(
         : source;
   if (p.rebirthEnhanced) d = rebirthEnhancedDefinition(source, d);
   const out: Move[] = [];
+  // 索敵型が共有した対象は、契約者だけが距離・通常射程を問わず静止捕獲できる。
+  for (const track of s.dogTracks ?? []) {
+    if (!track.shared || track.ownerId !== p.id) continue;
+    const houndIndex = s.board.findIndex((piece) => piece?.id === track.houndId);
+    const targetIndex = s.board.findIndex((piece) => piece?.id === track.targetId);
+    if (houndIndex < 0 || targetIndex < 0) continue;
+    const houndPos = { row: Math.floor(houndIndex / 8), col: houndIndex % 8 }, targetPos = { row: Math.floor(targetIndex / 8), col: targetIndex % 8 };
+    if (Math.max(Math.abs(houndPos.row - targetPos.row), Math.abs(houndPos.col - targetPos.col)) <= 2)
+      out.push({ from, to: targetPos, stationary: true });
+  }
   for (const pattern of d.patterns) {
     const sealed = !!p.sealedUntil && (s.ply ?? 0) <= p.sealedUntil;
     if ((pattern.phase ?? 1) !== phase) continue;
@@ -332,6 +371,24 @@ export function pseudo(
     if (pattern.evolvedInitialOnly && (!p.evolved || p.evolvedMoved)) continue;
     const sign = p.color === "white" ? 1 : -1,
       v = pattern.vectors.map((x) => ({ dx: x.dx, dy: x.dy * sign }));
+    if (pattern.kind === "chain") {
+      const usage = pattern.usage ?? "both";
+      const visit = (state: Match, current: Pos, steps: Move[], previous?: Vec) => {
+        for (const vector of v) {
+          if (previous && vector.dx === -previous.dx && vector.dy === -previous.dy) continue;
+          const to = { row: current.row + vector.dy, col: current.col + vector.dx };
+          if (!inside(to)) continue;
+          const target = at(state, to);
+          if (target?.color === p.color || (target && usage === "move")) continue;
+          const step = { from: current, to };
+          const chain = [...steps, step];
+          out.push({ from, to: chain[0].to, chain });
+          if (!target && chain.length < pattern.maxChains) visit(raw(state, step), to, chain, vector);
+        }
+      };
+      visit(s, from, []);
+      continue;
+    }
     const max =
       pattern.kind === "leap"
         ? 1
@@ -400,7 +457,7 @@ export function pseudo(
   }
   return [
     ...new Map(
-      out.map((x) => [`${x.to.row},${x.to.col},${!!x.stationary},${x.passCaptureAt?.row ?? ""},${x.passCaptureAt?.col ?? ""}`, x]),
+      out.map((x) => [`${x.to.row},${x.to.col},${!!x.stationary},${x.passCaptureAt?.row ?? ""},${x.passCaptureAt?.col ?? ""},${x.chain?.map((step) => `${step.to.row}:${step.to.col}`).join("|") ?? ""}`, x]),
     ).values(),
   ];
 }
@@ -425,7 +482,7 @@ export const threatened = (s: Match, target: Pos, by: Color, d: Definition[]): b
       { ...s, preset: "royal-any", turn: by, winner: null, draw: false },
       from,
       d,
-    ).some((move) => eq(move.passCaptureAt ?? move.next?.passCaptureAt ?? move.next?.to ?? move.to, target));
+    ).some((move) => move.chain?.some((step) => eq(step.passCaptureAt ?? step.to, target)) ?? eq(move.passCaptureAt ?? move.next?.passCaptureAt ?? move.next?.to ?? move.to, target));
   });
 
 export interface RangeMark {
@@ -458,7 +515,7 @@ function captureSquares(
         moved: true,
       };
       const move = pseudo({ ...s, board }, from, d, phase).find((candidate) =>
-        eq(candidate.passCaptureAt ?? candidate.to, to),
+        candidate.chain?.some((step) => eq(step.passCaptureAt ?? step.to, to)) ?? eq(candidate.passCaptureAt ?? candidate.to, to),
       );
       if (move) targets.push({ to, stationary: !!move.stationary });
     }
@@ -482,7 +539,8 @@ export function inspectRange(s: Match, from: Pos, d: Definition[]) {
   };
   const first = pseudo(s, from, d);
   first.forEach((move) => {
-    if (!at(s, move.to)) add(move.to, { move: true });
+    const destination = move.chain?.at(-1)?.to ?? move.to;
+    if (!at(s, destination)) add(destination, { move: true });
   });
   captureSquares(s, from, d).forEach(({ to, stationary }) =>
     add(to, { capture: true, stationary }),
@@ -512,7 +570,8 @@ export function inspectRange(s: Match, from: Pos, d: Definition[]) {
   }
   return [...marks.values()];
 }
-function raw(s: Match, m: Move) {
+function raw(s: Match, m: Move): Match {
+  if (m.chain?.length) return m.chain.reduce((state, step) => raw(state, step), s);
   const b = [...s.board],
     p = b[idx(m.from)]!;
   if (m.transit) return { ...s, board: b };
@@ -579,10 +638,106 @@ export function legal(s: Match, from: Pos, d: Definition[]): Move[] {
             )
               return false;
           }
-          const n = raw(s, x),
+          const n = (x.chain ?? [x]).reduce((state, step) => raw(state, step), s),
             k = king(n, p.color);
           return !!k && !threatened(n, k, other(p.color), d);
         });
+  if (p.role === "hound") {
+    const ownerIndex = s.board.findIndex((piece) => piece?.id === p.dogOwnerId);
+    const owner = ownerIndex < 0 ? null : { row: Math.floor(ownerIndex / 8), col: ownerIndex % 8 };
+    const accelerated = !!owner && (p.dogTraining === "hunting" || p.dogTraining === "scouting") && Math.max(Math.abs(owner.row - from.row), Math.abs(owner.col - from.col)) <= 1;
+    const paths: Move[] = [];
+    if (p.dogTraining === "coordination" && owner) {
+      const enemyNear = s.board.some((piece, index) => piece?.color === other(p.color) && Math.max(Math.abs(Math.floor(index / 8) - from.row), Math.abs(index % 8 - from.col)) <= 2);
+      if (enemyNear) for (const vector of directions) {
+        const to = { row: owner.row + vector.dy, col: owner.col + vector.dx };
+        if (inside(to) && !at(s, to)) paths.push({ from, to, chain: [{ from, to }] });
+      }
+    }
+    const visit = (state: Match, current: Pos, steps: Move[], previous?: Vec) => {
+      if (steps.length) paths.push({ from, to: steps[0].to, chain: steps });
+      if (steps.length >= 3) {
+        // 索敵型は、3連鎖終了時に敵を発見済みかつ契約者へ近ければ追加2連鎖。
+        const ownerNear = !!owner && Math.max(Math.abs(owner.row - current.row), Math.abs(owner.col - current.col)) <= 2;
+        const found = state.board.some((piece, index) => piece?.color === other(p.color) && Math.max(Math.abs(Math.floor(index / 8) - current.row), Math.abs(index % 8 - current.col)) <= 2);
+        if (p.dogTraining === "scouting" && steps.length < 5 && ownerNear && found) {
+          // 下の通常連鎖生成を続け、最大5連鎖までを追加2連鎖として扱う。
+        } else {
+        // 狩猟型は通常3連鎖を使い切った後、同じ方向制限で捕獲専用の4連鎖目を持つ。
+        if (p.dogTraining === "hunting") for (const vector of orth) {
+          if (previous && vector.dx === -previous.dx && vector.dy === -previous.dy) continue;
+          const to = { row: current.row + vector.dy, col: current.col + vector.dx };
+          if (!inside(to) || at(state, to)?.color !== other(p.color)) continue;
+          const captureStep = { from: current, to };
+          const afterCapture = raw(state, captureStep);
+          const exits = orth
+            .filter((exit) => exit.dx !== -vector.dx || exit.dy !== -vector.dy)
+            .map((exit) => ({ from: to, to: { row: to.row + exit.dy, col: to.col + exit.dx } }))
+            .filter((exit) => inside(exit.to) && !at(afterCapture, exit.to));
+          if (exits.length) for (const exit of exits) paths.push({ from, to: steps[0].to, chain: [...steps, captureStep, exit] });
+          else paths.push({ from, to: steps[0].to, chain: [...steps, captureStep] });
+        }
+        return;
+        }
+      }
+      const max = accelerated && steps.length < 2 ? 2 : 1;
+      for (const vector of orth) {
+        if (previous && vector.dx === -previous.dx && vector.dy === -previous.dy) continue;
+        for (let distance = 1; distance <= max; distance++) {
+          const to = { row: current.row + vector.dy * distance, col: current.col + vector.dx * distance };
+          if (!inside(to)) break;
+          const target = at(state, to);
+          if (distance > 1 && at(state, { row: current.row + vector.dy * (distance - 1), col: current.col + vector.dx * (distance - 1) })) break;
+          if (target?.color === p.color || (p.dogTraining === "scouting" && target)) break;
+          const step: Move = { from: current, to };
+          const after = raw(state, step);
+          if (s.preset === "classic") {
+            const royal = king(after, p.color);
+            if (!royal || threatened(after, royal, other(p.color), d)) continue;
+          }
+          // 通常連鎖の捕獲は、その時点で終了する。
+          if (target) {
+            const capturedSteps = [...steps, step];
+            const forcedExits: Move[] = [];
+            // 狩猟型は捕獲後に、逆方向を除く1連鎖だけ移動専用で離脱できる。
+            if (p.dogTraining === "hunting") {
+              for (const exit of orth) {
+                if (exit.dx === -vector.dx && exit.dy === -vector.dy) continue;
+                const exitTo = { row: to.row + exit.dy, col: to.col + exit.dx };
+                if (inside(exitTo) && !at(after, exitTo)) forcedExits.push({ from: to, to: exitTo });
+              }
+            }
+            // 1〜2連鎖目での捕獲時は、離脱の代わりに契約者周囲へ帰還できる。
+            if (p.dogTraining === "hunting" && owner && capturedSteps.length <= 2) for (const returnVector of directions) {
+              const returnTo = { row: owner.row + returnVector.dy, col: owner.col + returnVector.dx };
+              if (inside(returnTo) && !at(after, returnTo)) forcedExits.push({ from: to, to: returnTo });
+            }
+            if (forcedExits.length) for (const exit of forcedExits) paths.push({ from, to: capturedSteps[0].to, chain: [...capturedSteps, exit] });
+            else paths.push({ from, to: steps.length ? steps[0].to : to, chain: capturedSteps });
+          }
+          else visit(after, to, [...steps, step], vector);
+          if (target) break;
+        }
+      }
+    };
+    visit(s, from, []);
+    // 連携型の追跡捕獲は通常の連鎖範囲を問わず対象の地点へ移動して捕獲する。
+    if (p.dogTraining === "coordination") for (const track of s.dogTracks ?? []) {
+      if (track.houndId !== p.id) continue;
+      const targetIndex = s.board.findIndex((piece) => piece?.id === track.targetId);
+      if (targetIndex >= 0) {
+        const to = { row: Math.floor(targetIndex / 8), col: targetIndex % 8 };
+        paths.push({ from, to, chain: [{ from, to }] });
+      }
+    }
+    return s.preset !== "classic"
+      ? paths
+      : paths.filter((move) => {
+          const after = (move.chain ?? [move]).reduce((state, step) => raw(state, step), s);
+          const royal = king(after, p.color);
+          return !!royal && !threatened(after, royal, other(p.color), d);
+        });
+  }
   if (p.role === "demon") {
     const combined: Move[] = [...base];
     for (const firstMove of base) {
@@ -814,7 +969,10 @@ function applyGrowth(match: Match, definitions: Definition[], statsSnapshot: Ret
     const demon = definition.growth
       ? growthStages(definition.growth).slice(beforeStage, afterStage).some((stage) => stage.demonContract)
       : !before.evolved && piece.evolved && !!definition.transformation && !!definition.demonContract;
-    return (eagle && !piece.eagleHuntUsed) || (demon && !piece.demonContractUsed);
+    const dog = definition.growth
+      ? growthStages(definition.growth).slice(beforeStage, afterStage).some((stage) => stage.dogHunt)
+      : !before.evolved && piece.evolved && !!definition.transformation && !!definition.dogHunt;
+    return (eagle && !piece.eagleHuntUsed) || (demon && !piece.demonContractUsed) || (dog && !piece.dogHuntUsed);
   });
   if (contractIndex >= 0) {
     const piece = board[contractIndex]!, before = match.board[contractIndex]!, definition = definitions.find((item) => item.id === piece.definitionId)!;
@@ -826,6 +984,22 @@ function applyGrowth(match: Match, definitions: Definition[], statsSnapshot: Ret
     const demon = definition.growth
       ? growthStages(definition.growth).slice(beforeStage, afterStage).some((stage) => stage.demonContract)
       : !!definition.transformation && !!definition.demonContract;
+    const dog = definition.growth
+      ? growthStages(definition.growth).slice(beforeStage, afterStage).some((stage) => stage.dogHunt)
+      : !!definition.transformation && !!definition.dogHunt;
+    if (dog && !piece.dogHuntUsed) {
+      const enemyHome = (pos: Pos) => piece.color === "white" ? pos.row <= 2 : pos.row >= 5;
+      const enemyHomeVacancies = result.board.filter((occupant, index) => !occupant && (piece.color === "white" ? Math.floor(index / 8) <= 2 : Math.floor(index / 8) >= 5)).length;
+      const candidates = directions
+        .map((v) => ({ row: origin.row + v.dy, col: origin.col + v.dx }))
+        .filter((pos) => inside(pos) && !at(result, pos) && enemyHomeVacancies - (enemyHome(pos) ? 1 : 0) >= 2);
+      // 猟犬・猪・うり坊のどれか一体でも置けない契約は開始しない。
+      if (candidates.length && enemyHomeVacancies >= 2) {
+        result.board[contractIndex] = { ...piece, dogHuntUsed: true };
+        result.pendingContract = { kind: "hound", owner: piece.color, contractorId: piece.id, training: definition.dogTraining ?? "hunting", huntId: `hunt-${piece.id}-${match.ply ?? 0}`, origin, candidates };
+        return result;
+      }
+    }
     const triggerEagle = eagle && !piece.eagleHuntUsed;
     const triggerDemon = demon && !piece.demonContractUsed;
     if (triggerEagle) {
@@ -888,10 +1062,28 @@ export function placeContract(s: Match, to: Pos): Match {
   const pending = s.pendingContract;
   if (!pending || !pending.candidates.some((pos) => eq(pos, to)) || at(s, to)) return s;
   const board = [...s.board];
+  if (pending.kind === "hound") {
+    const huntId = pending.huntId!;
+    board[idx(to)] = { id: `hound-${Date.now()}`, color: pending.owner, role: "hound", moved: false, dogOwnerId: pending.contractorId, dogTraining: pending.training as "hunting" | "coordination" | "scouting", dogHuntId: huntId, contractName: "猟犬" };
+    const recipient = other(pending.owner);
+    const candidates = Array.from({ length: 64 }, (_, i) => ({ row: Math.floor(i / 8), col: i % 8 })).filter((pos) => !at({ ...s, board }, pos) && (recipient === "white" ? pos.row >= 5 : pos.row <= 2));
+    return { ...s, board, pendingContract: candidates.length ? { kind: "boar", owner: recipient, contractorId: pending.contractorId, huntId, origin: pending.origin, candidates } : undefined };
+  }
+  if (pending.kind === "boar") {
+    const boarId = `boar-${Date.now()}`;
+    board[idx(to)] = { id: boarId, color: pending.owner, role: "boar", moved: false, dogHuntId: pending.huntId, contractName: "猪" };
+    const candidates = Array.from({ length: 64 }, (_, i) => ({ row: Math.floor(i / 8), col: i % 8 })).filter((pos) => !at({ ...s, board }, pos) && (pending.owner === "white" ? pos.row >= 5 : pos.row <= 2));
+    return { ...s, board, pendingContract: candidates.length ? { kind: "piglet", owner: pending.owner, contractorId: pending.contractorId, huntId: pending.huntId, origin: pending.origin, candidates } : undefined };
+  }
+  if (pending.kind === "piglet") {
+    const boar = board.find((piece) => piece?.role === "boar" && piece.dogHuntId === pending.huntId);
+    board[idx(to)] = { id: `piglet-${Date.now()}`, color: pending.owner, role: "piglet", moved: false, dogHuntId: pending.huntId, boarId: boar?.id, contractName: "うり坊" };
+    return { ...s, board, pendingContract: undefined };
+  }
   if (pending.kind === "raptor") {
     const name = ["鷲", "鷹", "隼"][Math.floor(Math.random() * 3)];
     const id = `raptor-${Date.now()}`;
-    board[idx(to)] = { id, color: pending.owner, role: "raptor", moved: false, eagleOwnerId: pending.contractorId, eagleTraining: pending.training, contractName: name };
+    board[idx(to)] = { id, color: pending.owner, role: "raptor", moved: false, eagleOwnerId: pending.contractorId, eagleTraining: pending.training as "coordination" | "hunting" | "support" | undefined, contractName: name };
     const ownerIndex = board.findIndex((piece) => piece?.id === pending.contractorId);
     if (ownerIndex >= 0) board[ownerIndex] = { ...board[ownerIndex]!, raptorId: id };
     return { ...s, board, pendingContract: { kind: "crow", owner: other(pending.owner), contractorId: pending.contractorId, origin: pending.origin, candidates: (pending.nextCandidates ?? []).filter((pos) => !at({ ...s, board }, pos)), followupDemon: pending.followupDemon } };
@@ -938,14 +1130,19 @@ export function placeRebirth(s: Match, to: Pos): Match {
   return { ...s, board, pendingRebirth: undefined, message: `${pending.owner === "white" ? "白" : "黒"}の駒が再生しました。` };
 }
 export function play(s: Match, m: Move, d: Definition[]) {
-  const p = at(s, m.from)!,
-    captures = [m.passCaptureAt ? at(s, m.passCaptureAt) : (m.swap || m.transit ? null : at(s, m.to)), m.next ? at(raw(s, m), m.next.passCaptureAt ?? m.next.to) : null].filter(
-      Boolean,
-    ) as Piece[],
+  const steps = m.chain?.length ? m.chain : [m, ...(m.next ? [m.next] : [])];
+  const p = at(s, steps[0].from)!;
+  let before = s;
+  const captures: Piece[] = [];
+  for (const step of steps) {
+    const captured = step.passCaptureAt ? at(before, step.passCaptureAt) : (step.swap || step.transit || step.stationary ? null : at(before, step.to));
+    if (captured) captures.push(captured);
+    before = raw(before, step);
+  }
+  const lastStep = steps[steps.length - 1],
     enemy = other(p.color),
     royalCaptures = captures.filter((cap) => isRoyal(cap, d));
-  let n = raw(s, m);
-  if (m.next) n = raw(n, m.next);
+  let n = before;
   // 道連れは捕獲した側も同時に除去する（王冠は捕獲できない）。
   const deathbound = captures.some((capture) => {
     const definition = capture.role === "custom" ? d.find((item) => item.id === capture.definitionId) : undefined;
@@ -962,11 +1159,7 @@ export function play(s: Match, m: Move, d: Definition[]) {
   const movingIndex = n.board.findIndex((piece) => piece?.id === p.id);
   if (movingIndex >= 0) {
     const moving = n.board[movingIndex]!;
-    const firstPosition = m.stationary ? m.from : m.to;
-    const positions = [
-      firstPosition,
-      ...(m.next ? [m.next.stationary ? firstPosition : m.next.to] : []),
-    ];
+    const positions = steps.map((step) => step.stationary ? step.from : (step.recoilTo ?? step.to));
     const reached = Math.min(
       moving.reachedEnemyDepth ?? 8,
       ...positions.map((position) => enemyDepth(p.color, position)),
@@ -978,11 +1171,26 @@ export function play(s: Match, m: Move, d: Definition[]) {
     };
     if (p.role === "king") stats[p.color].kingDepth = Math.min(stats[p.color].kingDepth, reached);
   }
+  // うり坊は、紐付いた猪が取られるか、同じ猪が累計2体を捕獲した時点で猪化する。
+  const capturedBoars = captures.filter((piece) => piece.role === "boar").map((piece) => piece.id);
+  n.board = n.board.map((piece) => {
+    if (!piece || piece.role !== "piglet") return piece;
+    const pairedBoar = n.board.find((candidate) => candidate?.id === piece.boarId);
+    if (capturedBoars.includes(piece.boarId ?? "") || (pairedBoar?.boarCaptures ?? 0) >= 2 || (p.role === "boar" && piece.boarId === p.id && (p.boarCaptures ?? 0) + capturedCount >= 2))
+      return { ...piece, role: "boar", contractName: "猪" };
+    return piece;
+  });
+  const movedPigletIndex = n.board.findIndex((piece) => piece?.id === p.id);
+  if (p.role === "piglet" && capturedCount && movedPigletIndex >= 0)
+    n.board[movedPigletIndex] = { ...n.board[movedPigletIndex]!, role: "boar", contractName: "猪" };
+  const movedBoarIndex = n.board.findIndex((piece) => piece?.id === p.id);
+  if (p.role === "boar" && capturedCount && movedBoarIndex >= 0)
+    n.board[movedBoarIndex] = { ...n.board[movedBoarIndex]!, boarCaptures: (n.board[movedBoarIndex]!.boarCaptures ?? 0) + capturedCount };
   n = { ...n, stats };
   // 封印は捕獲地点を中心に3×3、相手の次の手番終了まで継続する。
   const moverDefinition = p.role === "custom" ? d.find((item) => item.id === p.definitionId) : undefined;
   if (capturedCount && moverDefinition?.seal && p.evolved && !(p.sealedUntil && (s.ply ?? 0) <= p.sealedUntil)) {
-    const center = m.next?.passCaptureAt ?? m.next?.to ?? m.passCaptureAt ?? m.to;
+    const center = lastStep.passCaptureAt ?? lastStep.to;
     n.board = n.board.map((piece, index) => {
       if (!piece || piece.color === p.color) return piece;
       const pos = { row: Math.floor(index / 8), col: index % 8 };
@@ -998,7 +1206,7 @@ export function play(s: Match, m: Move, d: Definition[]) {
   });
   if (reborn) {
     const definition = d.find((item) => item.id === reborn.definitionId)!;
-    const origin = m.next?.passCaptureAt ?? m.next?.to ?? m.passCaptureAt ?? m.to;
+    const origin = lastStep.passCaptureAt ?? lastStep.to;
     const candidates = directions.map((v) => ({ row: origin.row + v.dy, col: origin.col + v.dx })).filter((pos) => inside(pos) && !at(n, pos));
     if (candidates.length) n.pendingRebirth = { owner: reborn.color, piece: { ...reborn, rebirthUsed: true, rebirthEnhanced: rebirthEnhancementActive(reborn, definition) }, origin, candidates };
   }
@@ -1018,7 +1226,7 @@ export function play(s: Match, m: Move, d: Definition[]) {
   n = applyGrowth(n, d, statsSnapshot);
   const inherited = captures.find((capture) => !capture.summoned && capture.evolved && d.find((definition) => definition.id === capture.definitionId)?.summoning?.timing === "inherit");
   if (inherited) {
-    const origin = m.next ? m.next.to : m.to;
+    const origin = lastStep.to;
     const candidates = directions.map((v) => ({ row: origin.row + v.dy, col: origin.col + v.dx })).filter((pos) => inside(pos) && !at(n, pos));
     if (candidates.length) n.pendingSummon = { owner: inherited.color, definitionId: inherited.definitionId!, origin, remaining: 1, candidates };
   }
@@ -1033,7 +1241,7 @@ export function play(s: Match, m: Move, d: Definition[]) {
     ply: (s.ply ?? 0) + 1,
     lastMovedPieceId: p.id,
     enPassant:
-      !m.next &&
+      !m.chain && !m.next &&
       !m.stationary &&
       p.role === "pawn" &&
       Math.abs(m.to.row - m.from.row) === 2
@@ -1041,7 +1249,7 @@ export function play(s: Match, m: Move, d: Definition[]) {
         : null,
     history: [
       ...n.history,
-      `${f(m.from.col)}${8 - m.from.row}${m.stationary ? "×" : "-"}${f(m.to.col)}${8 - m.to.row}${m.next ? `${m.next.stationary ? "×" : "-"}${f(m.next.to.col)}${8 - m.next.to.row}` : ""}`,
+      steps.map((step, index) => `${index ? "→" : ""}${f(step.from.col)}${8 - step.from.row}${step.stationary ? "×" : "-"}${f(step.to.col)}${8 - step.to.row}`).join(""),
     ],
     winner: win ? p.color : null,
     message: win
@@ -1152,6 +1360,82 @@ export function play(s: Match, m: Move, d: Definition[]) {
     // 旧対局データや盤面Editor由来でzeroTurnsが無い零体も、初期寿命3として扱う。
     const value = (piece.zeroTurns ?? 3) - 1;
     return value > 0 ? { ...piece, zeroTurns: value } : null;
+  });
+  // 犬猟追跡。索敵型は猟犬の連鎖終了地点で近接敵を発見し、契約者に近ければ共有する。
+  // 連携型は猟犬・契約者の双方の近接監視を同じ契約IDに記録する。
+  let dogTracks = (n.dogTracks ?? []).filter((track) => {
+    const houndIndex = n.board.findIndex((piece) => piece?.id === track.houndId), ownerIndex = n.board.findIndex((piece) => piece?.id === track.ownerId), targetIndex = n.board.findIndex((piece) => piece?.id === track.targetId);
+    if (houndIndex < 0 || ownerIndex < 0 || targetIndex < 0) return false;
+    const hound = n.board[houndIndex]!;
+    if (track.remaining && hound.color === p.color) return false;
+    // 索敵型は対象を犬が見失った瞬間、共有済み情報を含めて解除する。
+    if (hound.dogTraining === "scouting") {
+      const houndPos = { row: Math.floor(houndIndex / 8), col: houndIndex % 8 }, targetPos = { row: Math.floor(targetIndex / 8), col: targetIndex % 8 };
+      if (Math.max(Math.abs(houndPos.row - targetPos.row), Math.abs(houndPos.col - targetPos.col)) > 2) return false;
+    }
+    return true;
+  });
+  const dogWatches = (n.dogWatches ?? []).filter((watch) => n.board.some((piece) => piece?.id === watch.houndId) && n.board.some((piece) => piece?.id === watch.ownerId) && n.board.some((piece) => piece?.id === watch.targetId));
+  // 相手が動かした監視対象だけを、次の自分手番限定の追跡対象にする。
+  for (const watch of dogWatches.filter((item) => n.board.find((piece) => piece?.id === item.houndId)?.color === enemy)) {
+    const targetIndex = n.board.findIndex((piece) => piece?.id === watch.targetId), houndIndex = n.board.findIndex((piece) => piece?.id === watch.houndId), ownerIndex = n.board.findIndex((piece) => piece?.id === watch.ownerId);
+    if (targetIndex < 0 || houndIndex < 0 || ownerIndex < 0) continue;
+    const targetPos = { row: Math.floor(targetIndex / 8), col: targetIndex % 8 }, houndPos = { row: Math.floor(houndIndex / 8), col: houndIndex % 8 }, ownerPos = { row: Math.floor(ownerIndex / 8), col: ownerIndex % 8 };
+    const moved = targetPos.row !== watch.row || targetPos.col !== watch.col;
+    const near = Math.max(Math.abs(houndPos.row - targetPos.row), Math.abs(houndPos.col - targetPos.col)) <= 2 || Math.max(Math.abs(ownerPos.row - targetPos.row), Math.abs(ownerPos.col - targetPos.col)) <= 2;
+    if (moved && near) dogTracks.push({ huntId: watch.huntId, houndId: watch.houndId, ownerId: watch.ownerId, targetId: watch.targetId, shared: false, remaining: 1 });
+  }
+  n.board.forEach((hound, houndIndex) => {
+    if (!hound || hound.role !== "hound" || hound.color !== p.color || !hound.dogOwnerId || !hound.dogHuntId) return;
+    if (hound.dogTraining === "scouting" && p.id !== hound.id) return;
+    const ownerIndex = n.board.findIndex((piece) => piece?.id === hound.dogOwnerId);
+    if (ownerIndex < 0) return;
+    const houndPos = { row: Math.floor(houndIndex / 8), col: houndIndex % 8 }, ownerPos = { row: Math.floor(ownerIndex / 8), col: ownerIndex % 8 };
+    for (let i = 0; i < 64; i++) {
+      const target = n.board[i];
+      if (!target || target.color === hound.color || isRoyal(target, d)) continue;
+      const targetPos = { row: Math.floor(i / 8), col: i % 8 };
+      const scoutStops = p.id === hound.id ? steps.map((step) => step.recoilTo ?? step.to) : [houndPos];
+      const houndNear = scoutStops.some((stop) => Math.max(Math.abs(stop.row - targetPos.row), Math.abs(stop.col - targetPos.col)) <= 2);
+      if (hound.dogTraining === "scouting" ? houndNear : false) {
+        const shared = hound.dogTraining === "scouting" && houndNear && Math.max(Math.abs(houndPos.row - ownerPos.row), Math.abs(houndPos.col - ownerPos.col)) <= 2;
+        const existing = dogTracks.find((track) => track.houndId === hound.id && track.targetId === target.id);
+        if (existing) existing.shared ||= shared;
+        else {
+          // 猟犬ごとの追跡対象は新しいものを優先し、最大2体まで。
+          const oldest = dogTracks.findIndex((track) => track.houndId === hound.id);
+          if (dogTracks.filter((track) => track.houndId === hound.id).length >= 2 && oldest >= 0) dogTracks.splice(oldest, 1);
+          dogTracks.push({ huntId: hound.dogHuntId, houndId: hound.id, ownerId: hound.dogOwnerId, targetId: target.id, shared });
+        }
+      }
+    }
+  });
+  // 今回新規に発見した対象にも、手番終了時点の「犬から2マス以内」を適用する。
+  dogTracks = dogTracks.filter((track) => {
+    const houndIndex = n.board.findIndex((piece) => piece?.id === track.houndId), targetIndex = n.board.findIndex((piece) => piece?.id === track.targetId);
+    if (houndIndex < 0 || targetIndex < 0) return false;
+    const hound = n.board[houndIndex]!;
+    if (hound.dogTraining !== "scouting") return true;
+    return Math.max(Math.abs(Math.floor(houndIndex / 8) - Math.floor(targetIndex / 8)), Math.abs(houndIndex % 8 - targetIndex % 8)) <= 2;
+  });
+  n.dogTracks = dogTracks;
+  // 連携型の監視は、手番を終えた側の猟犬／契約者から2マス以内の敵を最大2体保存する。
+  // 両陣営の旧監視は、昇格判定後に破棄する。手番を終えた側の監視だけを以下で作り直す。
+  const nextDogWatches: NonNullable<Match["dogWatches"]> = [];
+  n.dogWatches = nextDogWatches;
+  n.board.forEach((hound, houndIndex) => {
+    if (!hound || hound.role !== "hound" || hound.color !== p.color || hound.dogTraining !== "coordination" || !hound.dogOwnerId || !hound.dogHuntId) return;
+    const ownerIndex = n.board.findIndex((piece) => piece?.id === hound.dogOwnerId);
+    if (ownerIndex < 0) return;
+    const houndPos = { row: Math.floor(houndIndex / 8), col: houndIndex % 8 }, ownerPos = { row: Math.floor(ownerIndex / 8), col: ownerIndex % 8 };
+    for (let i = 0; i < 64; i++) {
+      const target = n.board[i]; if (!target || target.color === p.color || isRoyal(target, d)) continue;
+      const pos = { row: Math.floor(i / 8), col: i % 8 };
+      if (Math.max(Math.abs(houndPos.row - pos.row), Math.abs(houndPos.col - pos.col)) > 2 && Math.max(Math.abs(ownerPos.row - pos.row), Math.abs(ownerPos.col - pos.col)) > 2) continue;
+      const own = nextDogWatches.filter((watch) => watch.houndId === hound.id);
+      if (own.length >= 2) nextDogWatches.splice(nextDogWatches.findIndex((watch) => watch.houndId === hound.id), 1);
+      nextDogWatches.push({ huntId: hound.dogHuntId, houndId: hound.id, ownerId: hound.dogOwnerId, targetId: target.id, row: pos.row, col: pos.col });
+    }
   });
   if (
     s.preset === "classic" && royalCaptures.some((cap) => cap.role === "custom")
