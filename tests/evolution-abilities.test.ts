@@ -96,6 +96,20 @@ describe("evolution-only movement abilities", () => {
     expect(threatened(state, { row: 4, col: 5 }, "white", [definition])).toBe(true);
   });
 
+  it("uses an occupied advance landing as a flight anchor without capturing it", () => {
+    const definition = base([
+      { kind: "advance", vectors: [{ dx: 1, dy: 0 }], usage: "both", runup: 1, jump: 2, width: 1 },
+      { kind: "direction", vectors: [{ dx: 1, dy: 0 }], range: 2, phase: 2, evolutionOnly: true, secondTrigger: "flight" },
+    ]);
+    const state = match();
+    state.board[idx({ row: 4, col: 1 })] = piece();
+    state.board[idx({ row: 4, col: 4 })] = { id: "anchor", color: "black", role: "pawn", moved: true };
+    const action = legal(state, { row: 4, col: 1 }, [definition]).find((move) => move.transit && move.next?.to.col === 6)!;
+    const next = play(state, action, [definition]);
+    expect(next.board[idx({ row: 4, col: 4 })]?.id).toBe("anchor");
+    expect(next.board[idx({ row: 4, col: 6 })]?.id).toBe("hero");
+  });
+
   it("allows local and once-per-piece global swaps", () => {
     const definition = base([{ kind: "direction", vectors: [{ dx: 1, dy: 0 }], range: 1 }], { localSwap: true, globalSwap: true });
     const state = match();

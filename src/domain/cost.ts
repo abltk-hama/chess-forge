@@ -153,7 +153,17 @@ export function transformedDefinition(d: Definition): Definition {
 }
 export function summonedDefinition(d: Definition): Definition {
   if (!d.summoning) return d;
-  return { ...d, name: d.summoning.name, symbol: d.summoning.symbol, patterns: d.summoning.patterns, isCrown: false, growth: undefined, transformation: undefined, summoning: undefined, rebirth: undefined };
+  const abilities = d.summoning.timing === "inherit"
+    ? { dark: d.dark, barrier: d.barrier, deathbind: d.deathbind, devotion: d.devotion, seal: d.seal }
+    : d.summoning.abilities ?? {};
+  return {
+    id: d.id,
+    name: d.summoning.name,
+    symbol: d.summoning.symbol,
+    patterns: structuredClone(d.summoning.patterns),
+    isCrown: false,
+    ...abilities,
+  };
 }
 export const SUMMON_LIMITS = {
   summon: [0, 11, 13, 15, 18],
@@ -162,6 +172,19 @@ export const SUMMON_LIMITS = {
 } as const;
 export function summonLimit(d: Definition) {
   return d.summoning ? SUMMON_LIMITS[d.summoning.timing][conditionDifficulty(d.summoning.condition)] : 0;
+}
+export function summoningAbilityCost(d: Definition) {
+  const summoning = d.summoning;
+  if (!summoning || summoning.timing === "inherit") return 0;
+  const abilities = summoning.abilities ?? {};
+  const values = [
+    abilities.dark ? COST.dark : 0,
+    abilities.barrier ? COST.barrier : 0,
+    abilities.deathbind ? COST.deathbind : 0,
+    abilities.devotion ? COST.devotion : 0,
+    abilities.seal ? COST.seal : 0,
+  ];
+  return values.reduce((sum, value) => sum + (summoning.timing === "split" ? Math.ceil(value / 2) : value), 0);
 }
 export function growthStages(growth: Growth): GrowthStage[] {
   return growth.stages?.length
@@ -184,6 +207,8 @@ export function applyPatternEnhancement(d: Definition, patternIndex: number, unl
         ? { ...pattern, usage, vectors: unlock.vectors ?? pattern.vectors }
         : pattern.kind === "chain"
           ? { ...pattern, usage: usage === "move" ? "move" : "both", maxChains: unlock.maxChains ?? pattern.maxChains }
+          : pattern.kind === "advance"
+            ? { ...pattern, usage }
         : {
             ...pattern,
             range: unlock.range ?? pattern.range,
@@ -226,6 +251,8 @@ export function evolvedDefinition(d: Definition, requestedStage?: number): Defin
           ? { ...pattern, usage, vectors: unlock.vectors ?? pattern.vectors }
           : pattern.kind === "chain"
             ? { ...pattern, usage: usage === "move" ? "move" : "both", maxChains: unlock.maxChains ?? pattern.maxChains }
+            : pattern.kind === "advance"
+              ? { ...pattern, usage }
           : {
             ...pattern,
             range: unlock.range ?? pattern.range,
@@ -271,7 +298,7 @@ export function conditionDifficulty(condition: EvolutionCondition) {
   return Math.min(4, base + (condition.center === "king" ? 1 : 0));
 }
 export function growthCost(d: Definition) {
-  const base = cost({ ...d, growth: undefined });
+  const base = cost({ ...d, growth: undefined, patterns: d.patterns.filter((pattern) => !pattern.evolutionOnly) });
   if (!d.growth) return { base, premium: 0, total: base, difficulty: 0, stages: [] };
   let previous = base;
   const stages = growthStages(d.growth).map((stage, index) => {
@@ -300,7 +327,7 @@ export function growthCost(d: Definition) {
 export const definitionCost = (definition: Definition) =>
   definition.growth
     ? growthCost(definition).total
-    : cost({ ...definition, transformation: undefined, summoning: undefined }) + (definition.summoning ? (definition.summoning.timing === "split" ? 0 : 5) + (definition.summoning.range === "movement" ? 3 : 0) : 0);
+    : cost({ ...definition, transformation: undefined, summoning: undefined }) + (definition.summoning ? (definition.summoning.timing === "split" ? 0 : 5) + (definition.summoning.range === "movement" ? 3 : 0) + summoningAbilityCost(definition) : 0);
 
 export interface DirectionCostBreakdown {
   moveDirection: number;
@@ -321,10 +348,11 @@ const directionMoveUnit = (vector: Vec, range: Range) => {
 };
 
 /** Direction Pattern群だけを、新しい財布式で評価する純粋関数。 */
-export function directionCostBreakdown(patterns: Pattern[]): DirectionCostBreakdown {
+export function directionCostBreakdown(patterns: Pattern[], transformedContext = false): DirectionCostBreakdown {
   const directionsOnly = patterns.filter((pattern): pattern is Extract<Pattern, { kind: "direction" }> => pattern.kind === "direction" && !pattern.growthStationaryBase);
   const chainsOnly = patterns.filter((pattern): pattern is Extract<Pattern, { kind: "chain" }> => pattern.kind === "chain" && !pattern.growthStationaryBase);
-  if (!directionsOnly.length && !chainsOnly.length) return { moveDirection: 0, rangeBase: 0, rangeEvaluation: 0, usage: 0, usageWallet: COST.usageWalletLimit, usageCharge: 0, total: 0 };
+  const advancesOnly = patterns.filter((pattern): pattern is Extract<Pattern, { kind: "advance" }> => pattern.kind === "advance" && !pattern.growthStationaryBase);
+  if (!directionsOnly.length && !chainsOnly.length && !advancesOnly.length) return { moveDirection: 0, rangeBase: 0, rangeEvaluation: 0, usage: 0, usageWallet: COST.usageWalletLimit, usageCharge: 0, total: 0 };
   let moveDirection = 0;
   let usage = 0;
   let rangeEvaluation = 0;
@@ -352,8 +380,23 @@ export function directionCostBreakdown(patterns: Pattern[]): DirectionCostBreakd
     const chainUsage = pattern.maxChains * 2;
     usage += pattern.initialOnly || pattern.evolvedInitialOnly ? Math.ceil(chainUsage / 2) : chainUsage;
   }
+  for (const pattern of advancesOnly) {
+    const initial = !!(pattern.initialOnly || pattern.evolvedInitialOnly);
+    const usageUnit = COST.directionUsage[pattern.usage ?? "both"];
+    let setPremium = (pattern.runup === 1 ? 2 : 0) + (pattern.width === 3 ? 1 : 0);
+    if (initial) setPremium = Math.ceil(setPremium / 2);
+    moveDirection += setPremium;
+    for (const _vector of pattern.vectors) {
+      moveDirection += initial ? 1 : 2;
+      rangeEvaluation += 4;
+      usage += initial ? Math.ceil(usageUnit / 2) : usageUnit;
+    }
+  }
   const highestRange: Range = highestRank >= 4 ? "slide" : highestRank === 3 ? 3 : highestRank === 2 ? 2 : 1;
-  const rangeBase = COST.rangeBase[highestRange];
+  const directionBase = transformedContext
+    ? highestRank >= 4 ? 5 : highestRank === 3 ? 2 : 0
+    : COST.rangeBase[highestRange];
+  const rangeBase = Math.max(directionBase, advancesOnly.length && !transformedContext ? 5 : 0);
   const usageWallet = Math.max(0, COST.usageWalletLimit - rangeEvaluation);
   const usageCharge = Math.max(0, usage - usageWallet);
   return { moveDirection, rangeBase, rangeEvaluation, usage, usageWallet, usageCharge, total: moveDirection + rangeBase + usageCharge };
@@ -364,6 +407,7 @@ export function transformationLimit(d: Definition) {
 }
 export function cost(d: Definition, transformedContext = false) {
   if (
+    !transformedContext &&
     d.patterns.some(
       (p) =>
         p.kind === "direction" &&
@@ -376,17 +420,19 @@ export function cost(d: Definition, transformedContext = false) {
   let n = d.isCrown ? COST.crown : 0,
     cannon = false,
     slide = false;
-  const directionPricing = directionCostBreakdown(normalize(d).patterns);
+  const directionPricing = directionCostBreakdown(normalize(d).patterns, transformedContext);
   for (const p of normalize(d).patterns) {
     if (p.growthStationaryBase) continue;
     const usage = p.usage ?? "both";
-    if (p.kind === "chain") {
+    if (p.kind === "advance") {
+      // Move方向料金・基本料・Usageは共通wallet計算に含まれる。
+    } else if (p.kind === "chain") {
       const chargedChains = transformedContext ? Math.max(1, p.maxChains - 1) : p.maxChains;
       let value = p.vectors.length * chargedChains * (chargedChains + 1) / 2;
       if (p.initialOnly || p.evolvedInitialOnly) value = Math.ceil(value / 2);
       n += value;
     } else if (p.kind === "leap") {
-      const unit = COST.usageLeap[usage];
+      const unit = Math.max(1, COST.usageLeap[usage] - (transformedContext ? 1 : 0));
       let value = p.vectors.length * (p.initialOnly || p.evolvedInitialOnly ? Math.ceil(unit / 2) : unit);
       if (p.phase === 2 && p.secondTrigger && p.secondTrigger !== "normal" && !p.initialOnly && !p.evolvedInitialOnly) value = Math.ceil(value / 2);
       n += value;
@@ -455,6 +501,7 @@ function legacyCost(d: Definition, transformedContext = false) {
       total += p.vectors.length * (p.initialOnly ? Math.ceil(unit / 2) : unit);
       continue;
     }
+    if (p.kind === "advance") continue;
     if (p.kind === "chain") {
       const chargedChains = transformedContext ? Math.max(1, p.maxChains - 1) : p.maxChains;
       let value = p.vectors.length * chargedChains * (chargedChains + 1) / 2;
@@ -554,6 +601,11 @@ export function errors(d: Definition, all: Definition[] = [], evolvedContext = f
   if (n.patterns.some((p) => p.kind === "chain" && !["move", "both"].includes(p.usage ?? "both"))) e.push("連鎖移動は移動専用または移動・捕獲だけ設定できます。");
   if (n.patterns.some((p) => p.kind === "chain" && (p.phase === 2 || (p.secondTrigger && p.secondTrigger !== "normal")))) e.push("連鎖移動は2回目移動・捕獲後移動・飛翔に設定できません。");
   if (n.patterns.some((p) => p.kind === "chain" && p.vectors.some((v) => Math.abs(v.dx) + Math.abs(v.dy) !== 1))) e.push("連鎖移動は前後左右だけ設定できます。");
+  if (n.patterns.some((p) => p.kind === "advance" && (p.phase === 2 || (p.secondTrigger && p.secondTrigger !== "normal")))) e.push("躍進は第1移動専用です。");
+  if (n.patterns.some((p) => p.kind === "advance" && (!Number.isInteger(p.jump) || p.jump < 1))) e.push("躍進の跳躍距離は1以上の整数で設定してください。");
+  if (n.patterns.some((p) => p.kind === "advance" && p.runup !== 1 && p.runup !== 2)) e.push("躍進の助走距離は1または2で設定してください。");
+  if (n.patterns.some((p) => p.kind === "advance" && p.width !== 1 && p.width !== 3)) e.push("躍進の着地点幅は1または3で設定してください。");
+  if (n.patterns.some((p) => p.kind === "advance" && p.vectors.some((v) => Math.max(Math.abs(v.dx), Math.abs(v.dy)) !== 1))) e.push("躍進は周囲8方向だけ設定できます。");
   if (!evolvedContext && n.patterns.some((p) => p.kind === "chain" && p.maxChains === 4 && !p.evolutionOnly)) e.push("4連鎖は成長・変身後限定です。");
   if (n.patterns.some((p) => p.secondTrigger === "after-capture" && ((p.usage ?? "both") !== "move" || p.phase !== 2)))
     e.push("捕獲後移動は2回目の移動専用セットに設定してください。");
@@ -678,7 +730,8 @@ export function errors(d: Definition, all: Definition[] = [], evolvedContext = f
     if (summoned.symbol === n.symbol || (RESERVED_SYMBOLS as readonly string[]).includes(summoned.symbol)) e.push("派生駒の記号は通常駒・標準駒と重複できません。");
     if (all.some((item) => item.id !== n.id && (item.symbol.toUpperCase() === summoned.symbol || item.transformation?.symbol.toUpperCase() === summoned.symbol || item.summoning?.symbol.toUpperCase() === summoned.symbol))) e.push("派生駒の記号が重複しています。");
     if (summoned.patterns.length < 1 || summoned.patterns.length > 4 || summoned.patterns.some((p) => !p.vectors.length)) e.push("派生駒には1～4個の有効な移動セットが必要です。");
-    if (cost(summoned) > summonLimit(n)) e.push(`派生駒コストが上限${summonLimit(n)}を超えています。`);
+    const summonedMovement = { ...summoned, dark: undefined, barrier: undefined, deathbind: undefined, devotion: undefined, seal: undefined };
+    if (cost(summonedMovement) > summonLimit(n)) e.push(`派生駒コストが上限${summonLimit(n)}を超えています。`);
     if (n.isCrown && n.summoning.timing === "split") e.push("Crown駒は分裂できません。");
   }
   if (n.transformation) {
@@ -714,6 +767,6 @@ export function errors(d: Definition, all: Definition[] = [], evolvedContext = f
     if (transformedCost > transformationLimit(n))
       e.push(`変身後コストが上限${transformationLimit(n)}を超えています。`);
   }
-  if (growthCost(n).total > 30) e.push("コストが30を超えています。");
+  if (definitionCost(n) > 30) e.push("コストが30を超えています。");
   return e;
 }

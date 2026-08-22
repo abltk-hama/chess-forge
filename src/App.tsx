@@ -14,6 +14,7 @@ import {
   transformedDefinition,
   transformationLimit,
   summonLimit,
+  summoningAbilityCost,
   summonedDefinition,
   jumpLimit,
   prepareDefinitionForEditing,
@@ -369,6 +370,8 @@ function TransformationPatterns({
                       }
                     : event.target.value === "chain"
                       ? { kind: "chain", vectors: [], maxChains: 2, usage: "both" }
+                      : event.target.value === "advance"
+                        ? { kind: "advance", vectors: [], usage: "both", runup: 1, jump: 2, width: 1 }
                       : { kind: "leap", vectors: [], usage: "both" },
                 )
               }
@@ -376,6 +379,7 @@ function TransformationPatterns({
               <option value="direction">方向移動</option>
               <option value="leap">固定跳躍</option>
               <option value="chain">連鎖移動</option>
+              <option value="advance">躍進</option>
             </select>
           </label>
           <label>
@@ -552,6 +556,14 @@ function TransformationPatterns({
               </div>
               <p>変身後料金は実連鎖数−1で計算します。</p>
             </>
+          ) : pattern.kind === "advance" ? (
+            <>
+              <label>助走距離<select aria-label={`変身後セット${index + 1}の助走距離`} value={pattern.runup} onChange={(event) => update(index, { ...pattern, runup: Number(event.target.value) as 1 | 2 })}><option value="1">1マス</option><option value="2">2マス</option></select></label>
+              <label>跳躍距離<input aria-label={`変身後セット${index + 1}の跳躍距離`} type="number" min="1" step="1" value={pattern.jump} onChange={(event) => update(index, { ...pattern, jump: Math.max(1, Math.trunc(Number(event.target.value) || 1)) })} /></label>
+              <label>着地点幅<select aria-label={`変身後セット${index + 1}の着地点幅`} value={pattern.width} onChange={(event) => update(index, { ...pattern, width: Number(event.target.value) as 1 | 3 })}><option value="1">基準地点のみ</option><option value="3">基準地点と前後1マス</option></select></label>
+              <div className="checks">{directions.map((vector, directionIndex) => <button type="button" className={pattern.vectors.some((item) => item.dx === vector.dx && item.dy === vector.dy) ? "active" : ""} onClick={() => toggleVector(index, vector)} key={directionIndex}>{dirNames[directionIndex]}</button>)}</div>
+              <p>跳躍距離の推奨は1～7、幅3は2以上です。跳躍区間の駒は無視します。</p>
+            </>
           ) : (
             <>
               <LeapPicker
@@ -690,7 +702,7 @@ function Editor({
     ],
     growthPricing = growthCost(d),
     directionPricing = directionCostBreakdown(d.patterns),
-    n = growthPricing.total,
+    n = definitionCost(d),
     canSave = !e.length && (editing || all.length < MAX_DEFINITIONS);
   return (
     <section>
@@ -755,6 +767,8 @@ function Editor({
                             }
                           : x.target.value === "chain"
                             ? { kind: "chain", vectors: [], maxChains: 2, usage: "both", initialOnly: false }
+                            : x.target.value === "advance"
+                              ? { kind: "advance", vectors: [], usage: "both", runup: 1, jump: 2, width: 1, initialOnly: false }
                           : {
                               kind: "leap",
                               vectors: [],
@@ -767,6 +781,7 @@ function Editor({
                     <option value="direction">方向移動</option>
                     <option value="leap">固定跳躍</option>
                     <option value="chain">連鎖移動</option>
+                    <option value="advance">躍進</option>
                   </select>
                   <button
                     disabled={d.patterns.length === 1}
@@ -829,7 +844,7 @@ function Editor({
                 <label>
                   移動回数
                   <select
-                    disabled={pattern.kind === "chain"}
+                    disabled={pattern.kind === "chain" || pattern.kind === "advance"}
                     aria-label={`移動セット${index + 1}の移動回数`}
                     value={pattern.phase ?? 1}
                     onChange={(event) =>
@@ -1025,6 +1040,14 @@ function Editor({
                       })}
                     </div>
                     <p>1連鎖1マス。直前方向の逆は禁止。捕獲すると連鎖を終了します。</p>
+                  </>
+                ) : pattern.kind === "advance" ? (
+                  <>
+                    <label>助走距離<select aria-label={`移動セット${index + 1}の助走距離`} value={pattern.runup} onChange={(event) => updatePattern(index, { ...pattern, runup: Number(event.target.value) as 1 | 2 })}><option value="1">1マス</option><option value="2">2マス</option></select></label>
+                    <label>跳躍距離<input aria-label={`移動セット${index + 1}の跳躍距離`} type="number" min="1" step="1" value={pattern.jump} onChange={(event) => updatePattern(index, { ...pattern, jump: Math.max(1, Math.trunc(Number(event.target.value) || 1)) })} /></label>
+                    <label>着地点幅<select aria-label={`移動セット${index + 1}の着地点幅`} value={pattern.width} onChange={(event) => updatePattern(index, { ...pattern, width: Number(event.target.value) as 1 | 3 })}><option value="1">基準地点のみ</option><option value="3">基準地点と前後1マス</option></select></label>
+                    <div className="checks">{directions.map((vector, directionIndex) => <button className={pattern.vectors.some((item) => item.dx === vector.dx && item.dy === vector.dy) ? "active" : ""} onClick={() => toggle(index, vector)} key={directionIndex}>{dirNames[directionIndex]}</button>)}</div>
+                    <p>跳躍距離の推奨は1～7、幅3は2以上です。幅3は進行方向上の基準地点と前後1マスです。</p>
                   </>
                 ) : (
                   <>
@@ -1549,6 +1572,7 @@ function Editor({
                     })
                   }
                 />
+                <p>変身後優遇：方向Range基本を軽減／固定跳躍は1点引き／連鎖はn−1計算／躍進は基本料なし</p>
               </>
             )}
             {d.summoning && (
@@ -1559,6 +1583,24 @@ function Editor({
                 <label>派生駒名称<input aria-label="派生駒名称" maxLength={20} value={d.summoning.name} onChange={(event) => setD({ ...d, summoning: { ...d.summoning!, name: event.target.value } })} /></label>
                 <label>派生駒記号<input aria-label="派生駒記号" maxLength={2} value={d.summoning.symbol} onChange={(event) => setD({ ...d, summoning: { ...d.summoning!, symbol: event.target.value.toUpperCase() } })} /></label>
                 <TransformationPatterns patterns={d.summoning.patterns} onChange={(patterns) => setD({ ...d, summoning: { ...d.summoning!, patterns } })} />
+                {d.summoning.timing === "inherit" ? (
+                  <p>暗躍・結界・道連れ・献身・封印は召喚元から自動継承します（追加料金なし）。</p>
+                ) : (
+                  <fieldset className="pattern-card">
+                    <legend>派生駒の特殊能力（{d.summoning.timing === "split" ? "半額" : "全額"}）</legend>
+                    {([
+                      ["dark", "暗躍"],
+                      ["barrier", "結界"],
+                      ["deathbind", "道連れ"],
+                      ["devotion", "献身"],
+                      ["seal", "封印"],
+                    ] as const).map(([key, name]) => (
+                      <label key={key}><input aria-label={`派生駒の${name}`} type="checkbox" checked={!!d.summoning!.abilities?.[key]} onChange={(event) => setD({ ...d, summoning: { ...d.summoning!, abilities: { ...d.summoning!.abilities, [key]: event.target.checked } } })} />{name}</label>
+                    ))}
+                    <p>能力料金：+{summoningAbilityCost(d)}（召喚元の30点へ加算）</p>
+                    <p>零体・Crown・進化・再生・契約能力は設定できません。</p>
+                  </fieldset>
+                )}
                 <p>派生駒コスト上限：{summonLimit(d)}</p>
               </>
             )}
@@ -1575,6 +1617,7 @@ function Editor({
             <p>Usage：R1は追加なし、R2以上は移動0・捕獲1・静止1・両方2</p>
             <p>Usage財布：上限20、評価値 R1=1 / R2=2 / R3=4 / Slide=6</p>
             <p>連鎖Usage：移動0 / 両方2×実連鎖数（同じUsage財布から支払い）</p>
+            <p>躍進：基本5（Range基本と最大値共有）／方向2／セットごとに助走1なら+2・幅3なら+1／評価4・Usageは共通財布</p>
             <p>方向 {directionPricing.moveDirection} + Range {directionPricing.rangeBase} + Usage実課金 {directionPricing.usageCharge} = {directionPricing.total}</p>
             <p>財布残高 {directionPricing.usageWallet} / 20（評価値 {directionPricing.rangeEvaluation}、Usage {directionPricing.usage}）</p>
           </details>
@@ -1710,6 +1753,20 @@ function Preview({ d }: { d: Definition }) {
         }
       };
       visit(0, 0, 0);
+    } else if (p.kind === "advance") {
+      const usage = p.usage ?? "both";
+      for (const v of p.vectors) for (const offset of p.width === 3 ? [-1, 0, 1] : [0]) {
+        const distance = p.runup + p.jump + offset;
+        if (distance <= p.runup || Math.abs(v.dy * distance) > 3 || Math.abs(v.dx * distance) > 3) continue;
+        const key = `${v.dy * distance},${v.dx * distance}`;
+        const target = targets.get(key) ?? { move: false, capture: false, stationary: false, leap: false, initial: false, cannon: false };
+        target.move ||= usage === "move" || usage === "both";
+        target.capture ||= usage !== "move";
+        target.stationary ||= usage === "stationary";
+        target.leap = true;
+        target.initial ||= !!p.initialOnly || !!p.evolvedInitialOnly;
+        targets.set(key, target);
+      }
     } else
     for (const v of p.vectors) {
       const max = p.kind === "leap" ? 1 : p.range === "slide" ? 3 : p.range;
@@ -2414,6 +2471,13 @@ function MovementViewer({
         <span className="legend-cannon">キャノン</span>
       </div>
       <p>{custom ? `コスト ${definitionCost(guide.definition)}/30` : "標準駒"}</p>
+      {shownDefinition.patterns.filter((pattern) => pattern.kind === "advance").map((pattern, index) => (
+        <p key={`advance-${index}`}>
+          躍進：{pattern.vectors.map((vector) => dirNames[directions.findIndex((direction) => direction.dx === vector.dx && direction.dy === vector.dy)]).join("・")} ／
+          助走{pattern.runup} ／ 跳躍{pattern.jump} ／ 幅{pattern.width} ／
+          {{ move: "移動専用", capture: "捕獲専用", stationary: "静止捕獲", both: "移動・捕獲" }[pattern.usage ?? "both"]}
+        </p>
+      ))}
       {guide.definition.isCrown && <p>♛ Crown</p>}
       {guide.definition.growth && (
         <p>

@@ -15,6 +15,11 @@ import { directions, idx, inside, other } from "./types";
 import { formationFromSetup } from "./formation";
 import { evolvedDefinition, growthStages, jumpLimit, rebirthEnhancedDefinition, summonedDefinition, transformedDefinition } from "./cost";
 import type { EvolutionCondition } from "./types";
+const definitionForPiece = (piece: Piece | null | undefined, definitions: Definition[]) => {
+  if (!piece || piece.role !== "custom") return undefined;
+  const source = definitions.find((definition) => definition.id === piece.definitionId);
+  return source && piece.summoned ? summonedDefinition(source) : source;
+};
 const back: Role[] = [
   "rook",
   "knight",
@@ -371,6 +376,31 @@ export function pseudo(
     if (pattern.evolvedInitialOnly && (!p.evolved || p.evolvedMoved)) continue;
     const sign = p.color === "white" ? 1 : -1,
       v = pattern.vectors.map((x) => ({ dx: x.dx, dy: x.dy * sign }));
+    if (pattern.kind === "advance") {
+      const runwayClear = v.filter((vector) => {
+        for (let step = 1; step <= pattern.runup; step++) {
+          const runway = { row: from.row + vector.dy * step, col: from.col + vector.dx * step };
+          if (!inside(runway) || at(s, runway)) return false;
+        }
+        return true;
+      });
+      const usage = pattern.usage ?? "both";
+      for (const vector of runwayClear) {
+        const baseDistance = pattern.runup + pattern.jump;
+        const offsets = pattern.width === 3 ? [-1, 0, 1] : [0];
+        for (const offset of offsets) {
+          const distance = baseDistance + offset;
+          if (distance <= pattern.runup) continue;
+          const to = { row: from.row + vector.dy * distance, col: from.col + vector.dx * distance };
+          if (!inside(to)) continue;
+          const target = at(s, to);
+          if (!target && (usage === "move" || usage === "both")) out.push({ from, to });
+          else if (target?.color !== p.color && (usage === "capture" || usage === "both")) out.push({ from, to });
+          else if (target?.color !== p.color && usage === "stationary") out.push({ from, to, stationary: true });
+        }
+      }
+      continue;
+    }
     if (pattern.kind === "chain") {
       const usage = pattern.usage ?? "both";
       const visit = (state: Match, current: Pos, steps: Move[], previous?: Vec) => {
@@ -413,17 +443,17 @@ export function pseudo(
       max,
       pattern.kind === "leap"
         ? 2
-        : sealed ? 0 : source.zeroBody ? 2 : jumpLimit(pattern.jumpAllies, pattern.canJump),
+        : sealed ? 0 : d.zeroBody ? 2 : jumpLimit(pattern.jumpAllies, pattern.canJump),
       pattern.kind === "leap"
         ? 2
-        : sealed ? 0 : source.zeroBody ? 2 : jumpLimit(pattern.jumpEnemies, pattern.canJump),
+        : sealed ? 0 : d.zeroBody ? 2 : jumpLimit(pattern.jumpEnemies, pattern.canJump),
       usage,
       {
         passEnemies: sealed || pattern.kind === "leap" ? 0 : pattern.passEnemies,
         passCapture: pattern.kind === "direction" ? pattern.passCapture : undefined,
         charge: !sealed && pattern.kind === "direction" && !!pattern.charge,
         isBarrier: pattern.kind === "direction"
-          ? (piece) => piece.role === "custom" && !!defs.find((item) => item.id === piece.definitionId)?.barrier && !(piece.sealedUntil && (s.ply ?? 0) <= piece.sealedUntil)
+          ? (piece) => !!definitionForPiece(piece, defs)?.barrier && !(piece.sealedUntil && (s.ply ?? 0) <= piece.sealedUntil)
           : undefined,
       },
     );
@@ -468,6 +498,7 @@ const king = (s: Match, c: Color) => {
 export const isRoyal = (piece: Piece, definitions: Definition[]) => {
   if (piece.role === "king") return true;
   if (piece.role !== "custom") return false;
+  if (piece.summoned) return false;
   const definition = definitions.find((item) => item.id === piece.definitionId);
   if (definition?.isCrown) return true;
   if (!definition?.growth) return false;
@@ -547,10 +578,7 @@ export function inspectRange(s: Match, from: Pos, d: Definition[]) {
   );
 
   const piece = at(s, from);
-  const definition =
-    piece?.role === "custom"
-      ? d.find((item) => item.id === piece.definitionId)
-      : undefined;
+  const definition = definitionForPiece(piece, d);
   if (!definition?.patterns.some((pattern) => pattern.phase === 2))
     return [...marks.values()];
 
@@ -611,9 +639,9 @@ export function legal(s: Match, from: Pos, d: Definition[]): Move[] {
   if (!p || p.color !== s.turn || s.winner || s.draw) return [];
   const first = pseudo(s, from, d).filter((move) => {
     const target = at(s, move.passCaptureAt ?? move.to);
-    const definition = target?.role === "custom" ? d.find((item) => item.id === target.definitionId) : undefined;
-    if (target && definition?.deathbind && target.evolved && !(target.sealedUntil && (s.ply ?? 0) <= target.sealedUntil) && isRoyal(p, d)) return false;
-    if (target && definition?.dark && target.evolved && !(target.sealedUntil && (s.ply ?? 0) <= target.sealedUntil)) {
+    const definition = definitionForPiece(target, d);
+    if (target && definition?.deathbind && (target.evolved || target.summoned) && !(target.sealedUntil && (s.ply ?? 0) <= target.sealedUntil) && isRoyal(p, d)) return false;
+    if (target && definition?.dark && (target.evolved || target.summoned) && !(target.sealedUntil && (s.ply ?? 0) <= target.sealedUntil)) {
       const capturePos = move.passCaptureAt ?? move.to;
       const distance = Math.max(Math.abs(capturePos.row - from.row), Math.abs(capturePos.col - from.col));
       if (move.stationary || distance >= 3) return false;
@@ -756,7 +784,7 @@ export function legal(s: Match, from: Pos, d: Definition[]): Move[] {
     return combined;
   }
   if (p.role !== "custom") return base;
-  const definition = d.find((item) => item.id === p.definitionId);
+  const definition = definitionForPiece(p, d);
   if (!definition) return base;
   const growthStage = p.growthStage ?? (p.evolved ? 1 : 0);
   let activeDefinition = definition.growth && growthStage
@@ -799,7 +827,7 @@ export function legal(s: Match, from: Pos, d: Definition[]): Move[] {
       return pseudo(state, attackerFrom, d).some((candidate) => eq(candidate.passCaptureAt ?? candidate.to, targetPos));
     });
   // 献身: 成長/変身後、チェック中の味方Royalと位置交換し、そのチェックを解除する。
-  if (definition.devotion && p.evolved && !pieceSealed) {
+  if (definition.devotion && (p.evolved || p.summoned) && !pieceSealed) {
     s.board.forEach((target, index) => {
       if (!target || target.color !== p.color || target.id === p.id || !isRoyal(target, d)) return;
       const to = { row: Math.floor(index / 8), col: index % 8 };
@@ -827,13 +855,29 @@ export function legal(s: Match, from: Pos, d: Definition[]): Move[] {
       combined.push({ ...firstMove, next: secondMove });
     }
   }
-  // 飛翔: 固定跳躍先の駒を中継点として残し、そこから最終地点を計算する。
+  // 飛翔: 固定跳躍または躍進の着地点にいる駒を中継点として残す。
   const flightPatterns = activeDefinition.patterns.filter((pattern) => pattern.phase === 2 && pattern.secondTrigger === "flight");
-  const leapPatterns = activeDefinition.patterns.filter((pattern) => (pattern.phase ?? 1) === 1 && pattern.kind === "leap");
-  if (p.evolved && flightPatterns.length && leapPatterns.length) {
+  const launchPatterns = activeDefinition.patterns.filter((pattern) => (pattern.phase ?? 1) === 1 && (pattern.kind === "leap" || pattern.kind === "advance"));
+  if (p.evolved && flightPatterns.length && launchPatterns.length) {
     const sign = p.color === "white" ? 1 : -1;
-    for (const leap of leapPatterns) for (const vector of leap.vectors) {
-      const anchor = { row: from.row + vector.dy * sign, col: from.col + vector.dx };
+    for (const launch of launchPatterns) {
+      const anchors: Pos[] = [];
+      if (launch.kind === "leap") for (const vector of launch.vectors) anchors.push({ row: from.row + vector.dy * sign, col: from.col + vector.dx });
+      else if (launch.kind === "advance") for (const vector of launch.vectors) {
+        const oriented = { dx: vector.dx, dy: vector.dy * sign };
+        let runwayClear = true;
+        for (let step = 1; step <= launch.runup; step++) {
+          const runway = { row: from.row + oriented.dy * step, col: from.col + oriented.dx * step };
+          if (!inside(runway) || at(s, runway)) { runwayClear = false; break; }
+        }
+        if (!runwayClear) continue;
+        const baseDistance = launch.runup + launch.jump;
+        for (const offset of launch.width === 3 ? [-1, 0, 1] : [0]) {
+          const distance = baseDistance + offset;
+          if (distance > launch.runup) anchors.push({ row: from.row + oriented.dy * distance, col: from.col + oriented.dx * distance });
+        }
+      } else continue;
+      for (const anchor of anchors) {
       if (!inside(anchor) || !at(s, anchor)) continue;
       for (const pattern of flightPatterns) for (const vector2 of pattern.vectors) {
         const max: number = pattern.kind === "direction" && pattern.range === "slide" ? 7 : pattern.kind === "direction" ? pattern.range as number : 1;
@@ -848,6 +892,7 @@ export function legal(s: Match, from: Pos, d: Definition[]): Move[] {
           if (s.preset === "classic") { const royal = king(after, p.color); if (!royal || threatened(after, royal, other(p.color), d)) continue; }
           combined.push(action);
         }
+      }
       }
     }
   }
@@ -1145,8 +1190,8 @@ export function play(s: Match, m: Move, d: Definition[]) {
   let n = before;
   // 道連れは捕獲した側も同時に除去する（王冠は捕獲できない）。
   const deathbound = captures.some((capture) => {
-    const definition = capture.role === "custom" ? d.find((item) => item.id === capture.definitionId) : undefined;
-    return !!definition?.deathbind && capture.evolved && !(capture.sealedUntil && (s.ply ?? 0) <= capture.sealedUntil);
+    const definition = definitionForPiece(capture, d);
+    return !!definition?.deathbind && (capture.evolved || capture.summoned) && !(capture.sealedUntil && (s.ply ?? 0) <= capture.sealedUntil);
   });
   if (deathbound) {
     const moving = n.board.findIndex((piece) => piece?.id === p.id);
@@ -1188,8 +1233,8 @@ export function play(s: Match, m: Move, d: Definition[]) {
     n.board[movedBoarIndex] = { ...n.board[movedBoarIndex]!, boarCaptures: (n.board[movedBoarIndex]!.boarCaptures ?? 0) + capturedCount };
   n = { ...n, stats };
   // 封印は捕獲地点を中心に3×3、相手の次の手番終了まで継続する。
-  const moverDefinition = p.role === "custom" ? d.find((item) => item.id === p.definitionId) : undefined;
-  if (capturedCount && moverDefinition?.seal && p.evolved && !(p.sealedUntil && (s.ply ?? 0) <= p.sealedUntil)) {
+  const moverDefinition = definitionForPiece(p, d);
+  if (capturedCount && moverDefinition?.seal && (p.evolved || p.summoned) && !(p.sealedUntil && (s.ply ?? 0) <= p.sealedUntil)) {
     const center = lastStep.passCaptureAt ?? lastStep.to;
     n.board = n.board.map((piece, index) => {
       if (!piece || piece.color === p.color) return piece;
@@ -1201,7 +1246,7 @@ export function play(s: Match, m: Move, d: Definition[]) {
   }
   // 再生は取られた直後に予約し、次の自分の手番で周囲から配置する。
   const reborn = captures.find((capture) => {
-    const definition = capture.role === "custom" ? d.find((item) => item.id === capture.definitionId) : undefined;
+    const definition = definitionForPiece(capture, d);
     return !!definition?.rebirth && !capture.rebirthUsed && !definition?.zeroBody && !definition?.deathbind && !(capture.sealedUntil && (s.ply ?? 0) <= capture.sealedUntil);
   });
   if (reborn) {
@@ -1288,7 +1333,7 @@ export function play(s: Match, m: Move, d: Definition[]) {
     if (isRoyal(target, d)) continue;
     const trackerPos = { row: Math.floor(trackerIndex / 8), col: trackerIndex % 8 };
     const targetPos = { row: Math.floor(targetIndex / 8), col: targetIndex % 8 };
-    const definition = tracker.role === "custom" ? d.find((item) => item.id === tracker.definitionId) : undefined;
+    const definition = definitionForPiece(tracker, d);
     if (!definition) continue;
     const stage = tracker.growthStage ?? (tracker.evolved ? 1 : 0);
     let active = definition.growth && stage > 0 ? evolvedDefinition(definition, stage) : tracker.evolved && definition.transformation ? transformedDefinition(definition) : definition;
@@ -1312,7 +1357,7 @@ export function play(s: Match, m: Move, d: Definition[]) {
     const tracker = n.board[trackerIndex];
     if (!tracker || tracker.color !== p.color || tracker.role !== "custom") continue;
     if (tracker.sealedUntil && (n.ply ?? 0) <= tracker.sealedUntil) continue;
-    const definition = d.find((item) => item.id === tracker.definitionId);
+    const definition = definitionForPiece(tracker, d);
     if (!definition) continue;
     const stage = tracker.growthStage ?? (tracker.evolved ? 1 : 0);
     let active = definition.growth && stage > 0 ? evolvedDefinition(definition, stage) : tracker.evolved && definition.transformation ? transformedDefinition(definition) : definition;
@@ -1352,7 +1397,7 @@ export function play(s: Match, m: Move, d: Definition[]) {
   // 零体は「その駒を動かしたか」に関係なく、所有者の手番終了ごとに寿命が1減る。
   n.board = n.board.map((piece) => {
     if (!piece || piece.color !== p.color || piece.role !== "custom") return piece;
-    const definition = d.find((item) => item.id === piece.definitionId);
+    const definition = definitionForPiece(piece, d);
     if (!definition?.zeroBody) return piece;
     const stage = piece.growthStage ?? (piece.evolved ? 1 : 0);
     if (definition.growth && stage > 0 && growthStages(definition.growth)[stage - 1]?.overcomeZero)

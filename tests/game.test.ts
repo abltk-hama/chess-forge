@@ -516,6 +516,37 @@ describe("new movement abilities", () => {
     expect(legal(s, { row: 5, col: 4 }, [moveOnly]).some((move) => move.chain?.some((step) => step.to.row === 3 && step.to.col === 4))).toBe(false);
   });
 
+  it("advance requires clear runup but ignores pieces in the jump segment", () => {
+    const definition: Definition = { id: "advance", name: "Advance", symbol: "AD", isCrown: false, patterns: [{ kind: "advance", vectors: [{ dx: 0, dy: -1 }], usage: "move", runup: 2, jump: 3, width: 1 }] };
+    const s = customMatch(definition);
+    s.board[idx({ row: 7, col: 3 })] = { id: "p", color: "white", role: "custom", definitionId: definition.id, moved: false };
+    s.board[idx({ row: 4, col: 3 })] = { id: "ignored", color: "black", role: "pawn", moved: false };
+    expect(legal(s, { row: 7, col: 3 }, [definition]).some((move) => move.to.row === 2)).toBe(true);
+    s.board[idx({ row: 6, col: 3 })] = { id: "block", color: "white", role: "pawn", moved: false };
+    expect(legal(s, { row: 7, col: 3 }, [definition]).some((move) => move.to.row === 2)).toBe(false);
+  });
+
+  it("advance width three filters runup overlap and applies every Usage", () => {
+    const definition: Definition = { id: "advance-width", name: "Advance", symbol: "AW", isCrown: false, patterns: [{ kind: "advance", vectors: [{ dx: 0, dy: -1 }], usage: "both", runup: 1, jump: 1, width: 3 }] };
+    const s = customMatch(definition);
+    s.board[idx({ row: 6, col: 3 })] = { id: "p", color: "white", role: "custom", definitionId: definition.id, moved: false };
+    s.board[idx({ row: 3, col: 3 })] = { id: "target", color: "black", role: "pawn", moved: false };
+    const moves = legal(s, { row: 6, col: 3 }, [definition]);
+    expect(moves.some((move) => move.to.row === 5)).toBe(false);
+    expect(moves.some((move) => move.to.row === 4)).toBe(true);
+    expect(moves.some((move) => move.to.row === 3)).toBe(true);
+
+    for (const usage of ["move", "capture", "stationary", "both"] as const) {
+      const d: Definition = { ...definition, patterns: [{ ...definition.patterns[0], usage, width: 1, jump: 2 }] };
+      const state = customMatch(d);
+      state.board[idx({ row: 6, col: 3 })] = { id: "p", color: "white", role: "custom", definitionId: d.id, moved: false };
+      state.board[idx({ row: 3, col: 3 })] = { id: "enemy", color: "black", role: "pawn", moved: false };
+      const action = legal(state, { row: 6, col: 3 }, [d]).find((move) => move.to.row === 3);
+      expect(!!action).toBe(usage !== "move");
+      expect(!!action?.stationary).toBe(usage === "stationary");
+    }
+  });
+
   it("hunting hound requires an exit after a fourth-chain capture when one is available", () => {
     const s = customMatch({ id: "unused", name: "Unused", symbol: "UN", isCrown: false, patterns: [{ kind: "direction", vectors: [{ dx: 1, dy: 0 }], range: 1 }] });
     s.board[idx({ row: 4, col: 1 })] = { id: "dog", color: "white", role: "hound", moved: false, dogTraining: "hunting" };

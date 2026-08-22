@@ -3,9 +3,11 @@ import {
   cost,
   errors,
   evolvedDefinition,
+  growthCost,
   normalize,
   prepareDefinitionForEditing,
   summonedDefinition,
+  transformedDefinition,
 } from "../src/domain/cost";
 import type { Definition } from "../src/domain/types";
 const make = (partial: Partial<Definition> = {}): Definition => ({
@@ -583,5 +585,65 @@ describe("chain movement pricing", () => {
     expect(errors(make({ patterns: [{ ...chain(1, 2), usage: "capture" }] }))).toContain("連鎖移動は移動専用または移動・捕獲だけ設定できます。");
     expect(errors(make({ patterns: [{ ...chain(1, 2), phase: 2 }] }))).toContain("連鎖移動は2回目移動・捕獲後移動・飛翔に設定できません。");
     expect(errors(make({ patterns: [chain(1, 4)] }))).toContain("4連鎖は成長・変身後限定です。");
+  });
+});
+
+describe("advance movement pricing", () => {
+  const vectors = [{ dx: 0, dy: -1 }, { dx: 1, dy: 0 }, { dx: 0, dy: 1 }, { dx: -1, dy: 0 }];
+  const advance = (count: number, runup: 1 | 2 = 2, width: 1 | 3 = 1, usage: "move" | "capture" | "stationary" | "both" = "move", jump = 2) => ({
+    kind: "advance" as const, vectors: vectors.slice(0, count), runup, jump, width, usage,
+  });
+
+  it("charges a shared base, per-direction movement and per-set options", () => {
+    expect(cost(make({ patterns: [advance(1)] }))).toBe(7);
+    expect(cost(make({ patterns: [advance(1, 2, 3)] }))).toBe(8);
+    expect(cost(make({ patterns: [advance(1, 1, 1)] }))).toBe(9);
+    expect(cost(make({ patterns: [advance(4, 1, 3, "both")] }))).toBe(20);
+  });
+
+  it("does not charge by jump distance and charges the base only once", () => {
+    expect(cost(make({ patterns: [advance(1, 2, 1, "move", 1)] }))).toBe(7);
+    expect(cost(make({ patterns: [advance(1, 2, 1, "move", 20)] }))).toBe(7);
+    expect(cost(make({ patterns: [advance(1), advance(1)] }))).toBe(9);
+  });
+
+  it("shares the maximum base and Usage wallet with direction movement", () => {
+    const slide = { kind: "direction" as const, vectors, range: "slide" as const, usage: "move" as const };
+    expect(cost(make({ patterns: [slide, advance(1)] }))).toBe(21);
+    expect(cost(make({ patterns: [slide, advance(1, 2, 1, "both")] }))).toBe(23);
+  });
+
+  it("validates jump distance and first-move-only use", () => {
+    expect(errors(make({ patterns: [advance(1, 2, 1, "move", 0)] }))).toContain("躍進の跳躍距離は1以上の整数で設定してください。");
+    expect(errors(make({ patterns: [{ ...advance(1), phase: 2 }] }))).toContain("躍進は第1移動専用です。");
+    expect(errors(make({ patterns: [{ ...advance(1), vectors: [{ dx: 2, dy: 0 }] }] }))).toContain("躍進は周囲8方向だけ設定できます。");
+  });
+});
+
+describe("evolution movement pricing", () => {
+  it("excludes growth-only sets before growth and charges them through the gap", () => {
+    const definition = make({
+      patterns: [
+        { kind: "direction", vectors: [{ dx: 1, dy: 0 }], range: 1, usage: "move" },
+        { kind: "leap", vectors: [{ dx: 2, dy: 1 }], usage: "both", evolutionOnly: true },
+      ],
+      growth: { condition: { kind: "captures", subject: "self", threshold: 1 }, unlocks: {} },
+    });
+    const pricing = growthCost(definition);
+    expect(pricing.base).toBe(1);
+    expect(pricing.stages[0].evaluated).toBe(4);
+    expect(pricing.stages[0].gap).toBe(3);
+    expect(pricing.total).toBe(4);
+  });
+
+  it("applies a distinct transformed discount to every movement method", () => {
+    const transformedCost = (patterns: Definition["patterns"]) => {
+      const definition = make({ transformation: { condition: { kind: "captures", subject: "self", threshold: 1 }, name: "Next", symbol: "NX", patterns } });
+      return cost(transformedDefinition(definition), true);
+    };
+    expect(transformedCost([{ kind: "direction", vectors: [{ dx: 0, dy: -1 }], range: "slide", usage: "move" }])).toBe(8);
+    expect(transformedCost([{ kind: "leap", vectors: [{ dx: 2, dy: 1 }], usage: "both" }])).toBe(2);
+    expect(transformedCost([{ kind: "chain", vectors: [{ dx: 0, dy: -1 }], maxChains: 3, usage: "move" }])).toBe(3);
+    expect(transformedCost([{ kind: "advance", vectors: [{ dx: 0, dy: -1 }], runup: 2, jump: 2, width: 1, usage: "move" }])).toBe(2);
   });
 });

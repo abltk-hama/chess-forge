@@ -70,6 +70,19 @@ describe("App", () => {
     expect(usage.querySelector('option[value="stationary"]')).toBeNull();
   });
 
+  it("configures advance with shared runup, jump and width settings", () => {
+    render(<App />);
+    fireEvent.click(screen.getAllByRole("button", { name: "駒を作る" })[0]);
+    fireEvent.change(screen.getByLabelText("移動セット1の種類"), { target: { value: "advance" } });
+    fireEvent.click(screen.getByRole("button", { name: "前" }));
+    fireEvent.change(screen.getByLabelText("移動セット1の助走距離"), { target: { value: "1" } });
+    fireEvent.change(screen.getByLabelText("移動セット1の跳躍距離"), { target: { value: "4" } });
+    fireEvent.change(screen.getByLabelText("移動セット1の着地点幅"), { target: { value: "3" } });
+    expect(screen.getByLabelText("移動セット1の移動回数")).toBeDisabled();
+    expect(screen.getByText(/跳躍距離の推奨は1～7/)).toBeVisible();
+    expect(screen.getByRole("heading", { name: /コスト 10\/30/ })).toBeInTheDocument();
+  });
+
   it("allows growth to unlock capture for move-only chain movement", () => {
     render(<App />);
     fireEvent.click(screen.getAllByRole("button", { name: "駒を作る" })[0]);
@@ -137,6 +150,20 @@ describe("App", () => {
     expect(screen.getByRole("button", { name: "保存" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "保存" }));
     expect(screen.getByText(/変身あり/)).toBeVisible();
+  });
+
+  it("configures summoned whole-piece abilities with timing-specific pricing", () => {
+    render(<App />);
+    fireEvent.click(screen.getAllByRole("button", { name: "駒を作る" })[0]);
+    fireEvent.change(screen.getByLabelText("進化方式"), { target: { value: "summoning" } });
+    fireEvent.click(screen.getByLabelText("派生駒の結界"));
+    expect(screen.getByText("能力料金：+4（召喚元の30点へ加算）")).toBeVisible();
+    expect(screen.getByRole("heading", { name: /コスト 9\/30/ })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("召喚方式"), { target: { value: "split" } });
+    expect(screen.getByText("能力料金：+2（召喚元の30点へ加算）")).toBeVisible();
+    fireEvent.change(screen.getByLabelText("召喚方式"), { target: { value: "inherit" } });
+    expect(screen.getByText(/召喚元から自動継承/)).toBeVisible();
+    expect(screen.queryByLabelText("派生駒の結界")).toBeNull();
   });
 
   it("configures initial-only and cannon movement", () => {

@@ -85,6 +85,14 @@ export interface Summoning {
   name: string;
   symbol: string;
   patterns: Pattern[];
+  /** 通常召喚・分裂で派生駒へ個別付与する駒全体能力。零体等は対象外。 */
+  abilities?: {
+    dark?: boolean;
+    barrier?: boolean;
+    deathbind?: boolean;
+    devotion?: boolean;
+    seal?: boolean;
+  };
 }
 export type GameMode = "local" | "ai" | "ai-ai";
 export type AIDifficulty = "easy" | "normal" | "hard";
@@ -153,7 +161,23 @@ export interface Chain {
   phase?: 1 | 2;
   growthStationaryBase?: boolean;
 }
-export type Pattern = Direction | Leap | Chain;
+export interface Advance {
+  kind: "advance";
+  vectors: Vec[];
+  usage?: Usage;
+  runup: 1 | 2;
+  /** 1以上の任意整数。盤外になる距離は合法手生成時に除外する。 */
+  jump: number;
+  /** 1は基準着地点のみ、3は進行方向上のD-1/D/D+1。 */
+  width: 1 | 3;
+  initialOnly?: boolean;
+  evolvedInitialOnly?: boolean;
+  evolutionOnly?: boolean;
+  secondTrigger?: "normal" | "after-capture" | "flight";
+  phase?: 1 | 2;
+  growthStationaryBase?: boolean;
+}
+export type Pattern = Direction | Leap | Chain | Advance;
 export interface Definition {
   id: string;
   name: string;

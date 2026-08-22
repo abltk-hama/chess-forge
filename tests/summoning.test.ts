@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { definitionCost, summonLimit } from "../src/domain/cost";
+import { definitionCost, errors, summonLimit, summonedDefinition, summoningAbilityCost } from "../src/domain/cost";
 import { createMatch, legal, placeSummon, play } from "../src/domain/game";
 import { emptySetup, idx, type Definition } from "../src/domain/types";
 
@@ -45,6 +45,42 @@ describe("summoning", () => {
         expect(summonLimit(d)).toBe(expected[timing][index]);
       });
     }
+  });
+  it("charges whole-piece abilities to the summoner without consuming the derived movement limit", () => {
+    const normal = definition("summon");
+    normal.summoning!.abilities = { dark: true, barrier: true, seal: true };
+    expect(summoningAbilityCost(normal)).toBe(17);
+    expect(definitionCost(normal)).toBe(definitionCost(definition("summon")) + 17);
+    expect(errors(normal)).not.toContain(`派生駒コストが上限${summonLimit(normal)}を超えています。`);
+
+    const split = definition("split");
+    split.summoning!.abilities = { dark: true, barrier: true, deathbind: true, devotion: true, seal: true };
+    expect(summoningAbilityCost(split)).toBe(4 + 2 + 5 + 4 + 3);
+  });
+  it("inherits only eligible whole-piece abilities and never leaks parent abilities otherwise", () => {
+    const normal = { ...definition("summon"), dark: true, barrier: true, deathbind: true, devotion: true, seal: true, zeroBody: true, rebirth: {}, eagleHunt: true, isCrown: true } satisfies Definition;
+    const ordinarySummon = summonedDefinition(normal);
+    expect(ordinarySummon).toMatchObject({ isCrown: false });
+    for (const key of ["dark", "barrier", "deathbind", "devotion", "seal", "zeroBody", "rebirth", "eagleHunt"] as const)
+      expect(ordinarySummon[key]).toBeUndefined();
+
+    const inherit = { ...normal, summoning: { ...normal.summoning!, timing: "inherit" as const } };
+    expect(summonedDefinition(inherit)).toMatchObject({ dark: true, barrier: true, deathbind: true, devotion: true, seal: true, isCrown: false });
+    expect(summonedDefinition(inherit).zeroBody).toBeUndefined();
+    expect(summonedDefinition(inherit).rebirth).toBeUndefined();
+    expect(summonedDefinition(inherit).eagleHunt).toBeUndefined();
+  });
+  it("activates a configured summoned dark ability without marking the piece evolved", () => {
+    const d = definition("summon");
+    d.summoning!.abilities = { dark: true };
+    d.patterns = [{ kind: "direction", vectors: [{ dx: 1, dy: 0 }], range: "slide" }];
+    d.isCrown = true;
+    const s = createMatch([], emptySetup(), "royal-any");
+    s.board = Array(64).fill(null);
+    s.turn = "white";
+    s.board[idx({ row: 4, col: 0 })] = { id: "crown", color: "white", role: "custom", definitionId: d.id, moved: true };
+    s.board[idx({ row: 4, col: 4 })] = { id: "minion", color: "black", role: "custom", definitionId: d.id, moved: true, summoned: true };
+    expect(legal(s, { row: 4, col: 0 }, [d]).some((move) => move.to.col === 4)).toBe(false);
   });
   it("summons once after evolution and consumes the placement", () => {
     const d = definition(), next = play(state(d), { from: { row: 4, col: 2 }, to: { row: 4, col: 3 } }, [d]);
