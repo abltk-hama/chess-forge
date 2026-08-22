@@ -696,12 +696,12 @@ function Editor({
   };
   const e = [
       ...errors(d, all),
-      ...(d.patterns.some((pattern) => !pattern.vectors.length)
+      ...(!d.facility && d.patterns.some((pattern) => !pattern.vectors.length)
         ? ["各移動セットに移動先が必要です。"]
         : []),
     ],
     growthPricing = growthCost(d),
-    directionPricing = directionCostBreakdown(d.patterns),
+    directionPricing = directionCostBreakdown(d.facility ? [] : d.patterns),
     n = definitionCost(d),
     canSave = !e.length && (editing || all.length < MAX_DEFINITIONS);
   return (
@@ -743,7 +743,17 @@ function Editor({
               {usedSymbols.length ? usedSymbols.join(" ") : "なし"}
             </p>
           </div>
-          <div className="pattern-list">
+          <label>施設能力
+            <select aria-label="施設能力" value={d.facility?.kind ?? "none"} onChange={(event) => {
+              const kind = event.target.value;
+              setD({ ...d, facility: kind === "fortress" ? { kind } : kind === "watchtower" ? { kind, directions: "orthogonal", radius: 1 } : kind === "wagon" ? { kind } : undefined, isCrown: kind === "none" ? d.isCrown : false });
+            }}>
+              <option value="none">なし</option><option value="fortress">城塞 (+8)</option><option value="watchtower">見張り台 (+10)</option><option value="wagon">馬車 (+12)</option>
+            </select>
+          </label>
+          {d.facility?.kind === "watchtower" && <label>監視方向<select aria-label="見張り台の監視方向" value={d.facility.directions} onChange={(event) => setD({ ...d, facility: { ...d.facility as Extract<NonNullable<Definition["facility"]>, { kind: "watchtower" }>, directions: event.target.value as "orthogonal" | "diagonal" } })}><option value="orthogonal">十字4方向</option><option value="diagonal">斜め4方向</option></select></label>}
+          {d.facility && <p>施設は移動セットを使用できません。封印中は施設能力が停止します。</p>}
+          <fieldset disabled={!!d.facility} className="pattern-list">
             {d.patterns.map((pattern, index) => (
               <fieldset className="pattern-card" key={index}>
                 <legend>移動セット {index + 1}</legend>
@@ -1081,7 +1091,7 @@ function Editor({
                 )}
               </fieldset>
             ))}
-          </div>
+          </fieldset>
           <button
             disabled={d.patterns.length >= 4}
             onClick={() =>
@@ -1326,6 +1336,7 @@ function Editor({
                 <label><input type="checkbox" checked={!!activeGrowthStage.localSwap} onChange={(event) => writeGrowthStage(growthStageIndex, { ...activeGrowthStage, localSwap: event.target.checked })} />成長後に近接交換 (+3)</label>
                 <label><input type="checkbox" checked={!!activeGrowthStage.globalSwap} onChange={(event) => writeGrowthStage(growthStageIndex, { ...activeGrowthStage, globalSwap: event.target.checked })} />成長後に全域交換・1回 (+5)</label>
                 {d.zeroBody && <label>零体の寿命回復<select value={activeGrowthStage.zeroRecovery ?? 0} onChange={(event) => writeGrowthStage(growthStageIndex, { ...activeGrowthStage, zeroRecovery: Number(event.target.value) as 0 | 1 | 2, overcomeZero: false })}><option value="0">なし</option><option value="1">+1手番 (+3)</option><option value="2">+2手番 (+6)</option></select></label>}
+                {d.facility?.kind === "watchtower" && <label><input aria-label="成長後の捕捉範囲2" type="checkbox" checked={activeGrowthStage.watchRadius === 2} onChange={(event) => writeGrowthStage(growthStageIndex, { ...activeGrowthStage, watchRadius: event.target.checked ? 2 : undefined })} />捕捉配置範囲を2マスへ拡張</label>}
                 {d.zeroBody && growthStageIndex === 1 && <label><input type="checkbox" checked={!!activeGrowthStage.overcomeZero} onChange={(event) => writeGrowthStage(growthStageIndex, { ...activeGrowthStage, overcomeZero: event.target.checked, zeroRecovery: 0 })} />零体の寿命を克服 (+15)</label>}
                 {d.eagleHunt && <label><input type="checkbox" checked={!!activeGrowthStage.eagleHunt} onChange={(event) => writeGrowthStage(growthStageIndex, { ...activeGrowthStage, eagleHunt: event.target.checked })} />この段階で鷹狩を発動</label>}
                 {d.demonContract && <label><input type="checkbox" checked={!!activeGrowthStage.demonContract} onChange={(event) => writeGrowthStage(growthStageIndex, { ...activeGrowthStage, demonContract: event.target.checked })} />この段階で魔神との契約を発動</label>}
@@ -2645,6 +2656,8 @@ function Game({
   const localSwapTargets = new Set(moves.filter((move) => move.swap === "local").map((move) => `${move.to.row},${move.to.col}`));
   const globalSwapTargets = new Set(moves.filter((move) => move.swap === "global").map((move) => `${move.to.row},${move.to.col}`));
   const flightAnchors = new Set(moves.filter((move) => move.transit).map((move) => `${move.to.row},${move.to.col}`));
+  const interceptTargets = new Set(moves.filter((move) => move.facilityAction === "intercept").map((move) => `${move.to.row},${move.to.col}`));
+  const interceptors = new Set(match.transportExposure?.options.map((option) => option.enemyId) ?? []);
   const inspectedMarks = new Map(
     (inspected ? inspectRange(match, inspected, defs) : []).map((mark) => [
       `${mark.to.row},${mark.to.col}`,
@@ -2717,6 +2730,14 @@ function Game({
         (m) => m.to.row === p.row && m.to.col === p.col,
       );
       if (candidates.length) {
+        // 通常手と同じ着地点でも、専用表示されたマスのクリックは迎撃として処理する。
+        const interception = candidates.find((move) => move.facilityAction === "intercept");
+        if (interception) {
+          setMatch(play(match, interception, defs));
+          setSelected(null);
+          setInspected(null);
+          return;
+        }
         if (candidates.some((move) => move.chain)) {
           setChainChoices(candidates.filter((move) => move.chain));
           setChainDepth(1);
@@ -2803,6 +2824,7 @@ function Game({
                     ? "inspection-capturable"
                     : "inspection-switchable"
                   : "";
+              const facilityKind = piece?.role === "custom" && !piece.summoned ? defs.find((definition) => definition.id === piece.definitionId)?.facility?.kind : undefined;
               const isOutsideInspection = Boolean(
                 inspected && !isInspectedPiece && !mark,
               );
@@ -2818,14 +2840,14 @@ function Game({
               return (
                 <button
                   aria-label={`${p.row},${p.col}`}
-                  className={`${(p.row + p.col) % 2 ? "dark" : "light"} ${isInspectedPiece ? "selected" : ""} ${targets.has(key) ? "move" : ""} ${localSwapTargets.has(key) ? "local-swap" : ""} ${globalSwapTargets.has(key) ? "global-swap" : ""} ${flightAnchors.has(key) ? "flight-anchor" : ""} ${rangeClass} ${mark?.second ? "range-second" : ""} ${threatenedSquares.has(key) ? "threat" : ""} ${isOutsideInspection ? "inspection-muted" : ""}`}
+                  className={`${(p.row + p.col) % 2 ? "dark" : "light"} ${isInspectedPiece ? "selected" : ""} ${targets.has(key) ? "move" : ""} ${interceptTargets.has(key) ? "intercept-target" : ""} ${localSwapTargets.has(key) ? "local-swap" : ""} ${globalSwapTargets.has(key) ? "global-swap" : ""} ${flightAnchors.has(key) ? "flight-anchor" : ""} ${rangeClass} ${mark?.second ? "range-second" : ""} ${threatenedSquares.has(key) ? "threat" : ""} ${isOutsideInspection ? "inspection-muted" : ""}`}
                   onClick={() => click(p)}
                   aria-disabled={locked}
                   key={i}
                 >
                   {piece && (
                     <span
-                      className={`${piece.color} ${pieceFocusClass} ${piece.evolved ? "piece-evolved" : ""} ${piece.sealedUntil && (match.ply ?? 0) <= piece.sealedUntil ? "piece-sealed" : ""}`}
+                      className={`${piece.color} ${pieceFocusClass} ${piece.evolved ? "piece-evolved" : ""} ${interceptors.has(piece.id) ? "piece-intercept-ready" : ""} ${facilityKind ? `piece-facility piece-facility-${facilityKind}` : ""} ${piece.sealedUntil && (match.ply ?? 0) <= piece.sealedUntil ? "piece-sealed" : ""}`}
                     >
                       {pieceText(piece, defs)}
                     </span>
@@ -2884,6 +2906,12 @@ function Game({
               statuses.push(overcome ? "零体：寿命制限克服" : `零体：残り寿命 ${inspectedPiece.zeroTurns ?? 3}手番`);
             }
             if (sealed) statuses.push("封印中：特殊能力停止（この陣営の手番終了まで）");
+            if (definition?.facility) statuses.push(`施設：${definition.facility.kind === "fortress" ? "城塞" : definition.facility.kind === "watchtower" ? "見張り台" : "馬車"}（通常移動不可）`);
+            const facilityWatches = (match.facilityWatches ?? []).filter((item) => item.towerId === inspectedPiece.id);
+            const facilityTargets = (match.facilityTargets ?? []).filter((item) => item.towerId === inspectedPiece.id);
+            if (facilityWatches.length) statuses.push(`見張り台の監視中：${facilityWatches.length}体`);
+            if (facilityTargets.length) statuses.push(`見張り台の捕捉対象：${facilityTargets.length}体`);
+            if (match.transportExposure?.passengerId === inspectedPiece.id) statuses.push(`輸送迎撃の危険：${match.transportExposure.options.length}経路`);
             if (inspectedPiece.rebirthEnhanced) statuses.push("強化再生済み：再生後強化が有効");
             const tracked = (match.trackingTargets ?? []).filter((item) => item.trackerId === inspectedPiece.id);
             for (const item of tracked) {

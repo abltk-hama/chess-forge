@@ -48,6 +48,9 @@ export const COST = {
   eagleHunt: 5,
   demonContract: 3,
   dogHunt: 5,
+  fortress: 8,
+  watchtower: 10,
+  wagon: 12,
   budget: 30,
 };
 const key = (v: Vec) => `${v.dx},${v.dy}`;
@@ -238,6 +241,7 @@ export function evolvedDefinition(d: Definition, requestedStage?: number): Defin
   if (!stage) return { ...d, growth: undefined };
   return {
     ...d,
+    facility: d.facility?.kind === "watchtower" && stage.watchRadius === 2 ? { ...d.facility, radius: 2 } : d.facility,
     isCrown: d.isCrown || !!stage.unlockCrown,
     growth: undefined,
     patterns: d.patterns.flatMap((pattern, index): Pattern[] => {
@@ -408,6 +412,7 @@ export function transformationLimit(d: Definition) {
 export function cost(d: Definition, transformedContext = false) {
   if (
     !transformedContext &&
+    !d.facility &&
     d.patterns.some(
       (p) =>
         p.kind === "direction" &&
@@ -420,8 +425,10 @@ export function cost(d: Definition, transformedContext = false) {
   let n = d.isCrown ? COST.crown : 0,
     cannon = false,
     slide = false;
-  const directionPricing = directionCostBreakdown(normalize(d).patterns, transformedContext);
-  for (const p of normalize(d).patterns) {
+  const pricedPatterns = d.facility ? [] : normalize(d).patterns;
+  const directionPricing = directionCostBreakdown(pricedPatterns, transformedContext);
+  if (d.facility) n += d.facility.kind === "fortress" ? COST.fortress : d.facility.kind === "watchtower" ? COST.watchtower + (d.facility.radius === 2 ? 5 : 0) : COST.wagon;
+  for (const p of pricedPatterns) {
     if (p.growthStationaryBase) continue;
     const usage = p.usage ?? "both";
     if (p.kind === "advance") {
@@ -571,7 +578,7 @@ export function errors(d: Definition, all: Definition[] = [], evolvedContext = f
     )
   )
     e.push("通常記号が別の駒の変身後記号と重複しています。");
-  if (n.patterns.length < 1 || n.patterns.length > 4)
+  if ((!n.facility && n.patterns.length < 1) || n.patterns.length > 4)
     e.push("移動セットは1～4個です。");
   if (n.patterns.some((p) => p.evolvedInitialOnly || p.evolutionOnly || (p.secondTrigger && p.secondTrigger !== "normal")) && !n.growth && !n.transformation)
     e.push("進化限定の移動設定には成長または変身が必要です。");
@@ -652,7 +659,8 @@ export function errors(d: Definition, all: Definition[] = [], evolvedContext = f
     )
   )
     e.push("キャノンと静止捕獲は併用できません。");
-  if (!n.patterns.some((p) => p.vectors.length)) e.push("移動先が必要です。");
+  if (!n.facility && !n.patterns.some((p) => p.vectors.length)) e.push("移動先が必要です。");
+  if (n.facility && n.isCrown) e.push("施設にCrownは設定できません。");
   if (n.growth) {
     const stages = growthStages(n.growth);
     if (stages.length < 1 || stages.length > 2) e.push("成長段階は1～2段階です。");
@@ -677,8 +685,9 @@ export function errors(d: Definition, all: Definition[] = [], evolvedContext = f
           e.push("段階2の移動能力は段階1から累積させてください。");
       }
     }
-    if (!stages.some((stage) => stage.unlockCrown || Object.keys(stage.unlocks).length || stage.localSwap || stage.globalSwap) && !n.patterns.some((pattern) => pattern.evolutionOnly))
+    if (!stages.some((stage) => stage.unlockCrown || Object.keys(stage.unlocks).length || stage.localSwap || stage.globalSwap || stage.watchRadius === 2) && !n.patterns.some((pattern) => pattern.evolutionOnly))
       e.push("成長後に解放する能力が必要です。");
+    if (stages.some((stage) => stage.watchRadius === 2) && n.facility?.kind !== "watchtower") e.push("捕捉範囲の成長解放は見張り台専用です。");
     for (const [stageIndex, stage] of stages.entries()) for (const [key, unlock] of Object.entries(stage.unlocks)) {
       const pattern = n.patterns[Number(key)];
       if (!pattern) {

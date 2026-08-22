@@ -166,6 +166,16 @@ describe("App", () => {
     expect(screen.queryByLabelText("派生駒の結界")).toBeNull();
   });
 
+  it("configures a facility and disables its movement editor", () => {
+    render(<App />);
+    fireEvent.click(screen.getAllByRole("button", { name: "駒を作る" })[0]);
+    fireEvent.change(screen.getByLabelText("施設能力"), { target: { value: "watchtower" } });
+    fireEvent.change(screen.getByLabelText("見張り台の監視方向"), { target: { value: "diagonal" } });
+    expect(screen.getByRole("heading", { name: /コスト 10\/30/ })).toBeInTheDocument();
+    expect(screen.getByLabelText("移動セット1の種類")).toBeDisabled();
+    expect(screen.getByText(/施設は移動セットを使用できません/)).toBeVisible();
+  });
+
   it("configures initial-only and cannon movement", () => {
     render(<App />);
     fireEvent.click(screen.getAllByRole("button", { name: "駒を作る" })[0]);

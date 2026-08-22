@@ -57,6 +57,7 @@ export interface GrowthStage {
   eagleHunt?: boolean;
   demonContract?: boolean;
   dogHunt?: boolean;
+  watchRadius?: 2;
 }
 export interface Growth {
   condition: EvolutionCondition;
@@ -209,6 +210,7 @@ export interface Definition {
   demonContract?: boolean;
   dogHunt?: boolean;
   dogTraining?: "hunting" | "coordination" | "scouting";
+  facility?: { kind: "fortress" } | { kind: "watchtower"; directions: "orthogonal" | "diagonal"; radius?: 1 | 2 } | { kind: "wagon" };
 }
 export interface Piece {
   id: string;
@@ -262,6 +264,11 @@ export interface Move {
   chain?: Move[];
   /** 捕獲後の強制連鎖が残っており、この経路では終了できない。 */
   chainRequired?: boolean;
+  facilityAction?: "spotter" | "wagon" | "intercept";
+  wagonRoute?: Pos[];
+  capturePieceId?: string;
+  transportInterceptions?: { enemyId: string; to: Pos }[];
+  sourceRange?: Range;
 }
 export interface Setup {
   rook: string | null;
@@ -293,6 +300,9 @@ export interface Match {
   trackingWatches?: { trackerId: string; patternIndex: number; targetId: string; duration: 1 | 2 }[];
   /** 監視対象が射程外へ逃げたことで成立した追跡対象。remaining は使用可能な自手番数。 */
   trackingTargets?: { trackerId: string; targetId: string; remaining: 1 | 2 }[];
+  facilityWatches?: { towerId: string; targetId: string; directions: "orthogonal" | "diagonal" }[];
+  facilityTargets?: { towerId: string; targetId: string; remaining: 1 }[];
+  transportExposure?: { passengerId: string; owner: Color; options: { enemyId: string; to: Pos }[] };
   /** 犬猟専用の近接追跡。shared は索敵結果が契約者へ共有済みであることを表す。 */
   dogTracks?: { huntId: string; houndId: string; ownerId: string; targetId: string; shared: boolean; remaining?: 1 }[];
   /** 連携型の監視開始位置。相手手番で対象が動いた時だけ追跡対象へ昇格する。 */

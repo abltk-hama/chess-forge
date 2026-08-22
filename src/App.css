@@ -342,6 +342,28 @@ main > section {
   border-radius: 50%;
   background: #d5a62d;
 }
+.board .intercept-target {
+  box-shadow: inset 0 0 0 5px #f0782f;
+}
+.board .intercept-target:after {
+  content: "迎";
+  position: absolute;
+  right: 3px;
+  bottom: 2px;
+  width: auto;
+  margin: 0;
+  background: #7c2518;
+  color: #fff;
+  padding: 0.08rem 0.18rem;
+  border-radius: 0.2rem;
+  font-size: clamp(0.55rem, 1.8vw, 0.75rem);
+  line-height: 1;
+}
+.piece-intercept-ready {
+  filter: drop-shadow(0 0 3px #ff7a2f);
+  text-decoration: underline solid #ff7a2f 3px;
+  text-underline-offset: 0.18em;
+}
 .board .range-move {
   box-shadow: inset 0 0 0 5px #3f8fd2;
 }
@@ -585,6 +607,14 @@ main > section {
 .piece-evolved {
   position: relative;
 }
+.piece-facility {
+  position: relative;
+  text-decoration: underline double;
+  text-underline-offset: 0.18em;
+}
+.piece-facility-fortress { text-decoration-color: #c9a86a; }
+.piece-facility-watchtower { text-decoration-color: #69b7ff; }
+.piece-facility-wagon { text-decoration-color: #dc8f5b; }
 .growth-status {
   margin-bottom: 0.8rem;
   padding: 0.65rem;

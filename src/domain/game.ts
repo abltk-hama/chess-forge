@@ -133,8 +133,8 @@ function rays(
           out.push({ from, to, passCaptureAt: captureAt });
         }
       } else {
-        if (t.color !== color && options.isBarrier?.(t)) {
-          if (usage !== "move") out.push({ from, to, stationary: usage === "stationary" });
+        if (options.isBarrier?.(t)) {
+          if (t.color !== color && usage !== "move") out.push({ from, to, stationary: usage === "stationary" });
           break;
         }
         if (t.color === color) {
@@ -179,6 +179,7 @@ function cannonRays(
   vectors: Vec[],
   max: number,
   usage: Usage,
+  isBarrier?: (piece: Piece) => boolean,
 ) {
   const out: Move[] = [];
   for (const v of vectors) {
@@ -187,6 +188,7 @@ function cannonRays(
       const to = { row: from.row + v.dy * n, col: from.col + v.dx * n };
       if (!inside(to)) break;
       const target = at(s, to);
+      if (target && isBarrier?.(target)) break;
       if (!screen) {
         if (!target) {
           if (usage !== "capture") out.push({ from, to });
@@ -211,10 +213,14 @@ const orth = [
     { dx: -1, dy: 1 },
     { dx: -1, dy: -1 },
   ];
-function standard(s: Match, from: Pos, p: Piece): Move[] {
-  if (p.role === "rook") return rays(s, from, p.color, orth, 7);
-  if (p.role === "bishop") return rays(s, from, p.color, diag, 7);
-  if (p.role === "queen") return rays(s, from, p.color, [...orth, ...diag], 7);
+function standard(s: Match, from: Pos, p: Piece, definitions: Definition[] = []): Move[] {
+  const isBarrier = (piece: Piece) => {
+    const definition = definitionForPiece(piece, definitions);
+    return !!(definition?.barrier || (definition?.facility && definition.facility.kind !== "wagon")) && !(piece.sealedUntil && (s.ply ?? 0) <= piece.sealedUntil);
+  };
+  if (p.role === "rook") return rays(s, from, p.color, orth, 7, 0, 0, "both", { isBarrier });
+  if (p.role === "bishop") return rays(s, from, p.color, diag, 7, 0, 0, "both", { isBarrier });
+  if (p.role === "queen") return rays(s, from, p.color, [...orth, ...diag], 7, 0, 0, "both", { isBarrier });
   if (p.role === "knight")
     return rays(
       s,
@@ -308,7 +314,7 @@ export function pseudo(
   const p = at(s, from);
   if (!p) return [];
   if (p.role !== "custom") {
-    const base = standard(s, from, p);
+    const base = standard(s, from, p, defs);
     if (p.role === "hound" && p.dogTraining === "coordination") {
       const ownerIndex = s.board.findIndex((piece) => piece?.id === p.dogOwnerId);
       const enemyNear = s.board.some((piece, index) => piece?.color === other(p.color) && Math.max(Math.abs(Math.floor(index / 8) - from.row), Math.abs(index % 8 - from.col)) <= 2);
@@ -355,6 +361,7 @@ export function pseudo(
         ? transformedDefinition(source)
         : source;
   if (p.rebirthEnhanced) d = rebirthEnhancedDefinition(source, d);
+  if (d.facility) return [];
   const out: Move[] = [];
   // 索敵型が共有した対象は、契約者だけが距離・通常射程を問わず静止捕獲できる。
   for (const track of s.dogTracks ?? []) {
@@ -393,6 +400,13 @@ export function pseudo(
           if (distance <= pattern.runup) continue;
           const to = { row: from.row + vector.dy * distance, col: from.col + vector.dx * distance };
           if (!inside(to)) continue;
+          let structureBlocked = false;
+          for (let step = 1; step < distance; step++) {
+            const crossed = at(s, { row: from.row + vector.dy * step, col: from.col + vector.dx * step });
+            const facility = definitionForPiece(crossed, defs)?.facility;
+            if (facility && facility.kind !== "wagon" && !(crossed?.sealedUntil && (s.ply ?? 0) <= crossed.sealedUntil)) { structureBlocked = true; break; }
+          }
+          if (structureBlocked) continue;
           const target = at(s, to);
           if (!target && (usage === "move" || usage === "both")) out.push({ from, to });
           else if (target?.color !== p.color && (usage === "capture" || usage === "both")) out.push({ from, to });
@@ -431,7 +445,10 @@ export function pseudo(
     const additiveCannon = !sealed && pattern.kind === "direction" && !!pattern.growthCannon;
     if (!sealed && pattern.kind === "direction" && pattern.cannon) {
       out.push(
-        ...cannonRays(s, from, p.color, v, max, usage),
+        ...cannonRays(s, from, p.color, v, max, usage, (piece) => {
+          const definition = definitionForPiece(piece, defs);
+          return !!(definition?.barrier || (definition?.facility && definition.facility.kind !== "wagon")) && !(piece.sealedUntil && (s.ply ?? 0) <= piece.sealedUntil);
+        }),
       );
       continue;
     }
@@ -453,10 +470,14 @@ export function pseudo(
         passCapture: pattern.kind === "direction" ? pattern.passCapture : undefined,
         charge: !sealed && pattern.kind === "direction" && !!pattern.charge,
         isBarrier: pattern.kind === "direction"
-          ? (piece) => !!definitionForPiece(piece, defs)?.barrier && !(piece.sealedUntil && (s.ply ?? 0) <= piece.sealedUntil)
+          ? (piece) => {
+              const definition = definitionForPiece(piece, defs);
+              return !!(definition?.barrier || (definition?.facility && definition.facility.kind !== "wagon")) && !(piece.sealedUntil && (s.ply ?? 0) <= piece.sealedUntil);
+            }
           : undefined,
       },
     );
+    if (pattern.kind === "direction") generated.forEach((move) => { move.sourceRange = pattern.range; });
 
     if (!sealed && pattern.kind === "direction" && pattern.recoil) {
       for (const move of generated) {
@@ -470,7 +491,10 @@ export function pseudo(
       out.push(...generated.filter((move) => !at(s, move.to) || !!move.recoilTo));
     } else out.push(...generated);
     if (additiveCannon)
-      out.push(...cannonRays(s, from, p.color, v, max, "capture"));
+      out.push(...cannonRays(s, from, p.color, v, max, "capture", (piece) => {
+        const definition = definitionForPiece(piece, defs);
+        return !!(definition?.barrier || (definition?.facility && definition.facility.kind !== "wagon")) && !(piece.sealedUntil && (s.ply ?? 0) <= piece.sealedUntil);
+      }));
   }
   // 追跡成立後は元の固定跳躍範囲に関係なく、その追跡対象だけを直接捕獲できる。
   // Royal は監視・追跡対象外で、途中でRoyal化した場合もここで除外する。
@@ -487,7 +511,7 @@ export function pseudo(
   }
   return [
     ...new Map(
-      out.map((x) => [`${x.to.row},${x.to.col},${!!x.stationary},${x.passCaptureAt?.row ?? ""},${x.passCaptureAt?.col ?? ""},${x.chain?.map((step) => `${step.to.row}:${step.to.col}`).join("|") ?? ""}`, x]),
+      out.map((x) => [`${x.to.row},${x.to.col},${!!x.stationary},${x.sourceRange ?? ""},${x.passCaptureAt?.row ?? ""},${x.passCaptureAt?.col ?? ""},${x.chain?.map((step) => `${step.to.row}:${step.to.col}`).join("|") ?? ""}`, x]),
     ).values(),
   ];
 }
@@ -504,6 +528,20 @@ export const isRoyal = (piece: Piece, definitions: Definition[]) => {
   if (!definition?.growth) return false;
   const stage = piece.growthStage ?? (piece.evolved ? 1 : 0);
   return !!growthStages(definition.growth)[stage - 1]?.unlockCrown;
+};
+const fortressProtects = (s: Match, target: Pos, color: Color, definitions: Definition[]) =>
+  s.board.some((piece, index) => {
+    if (!piece || piece.color !== color || piece.sealedUntil && (s.ply ?? 0) <= piece.sealedUntil) return false;
+    if (definitionForPiece(piece, definitions)?.facility?.kind !== "fortress") return false;
+    const pos = { row: Math.floor(index / 8), col: index % 8 };
+    const dr = Math.abs(pos.row - target.row), dc = Math.abs(pos.col - target.col);
+    return (dr === 0 && dc >= 1 && dc <= 2) || (dc === 0 && dr >= 1 && dr <= 2);
+  });
+const activeFacility = (piece: Piece | null | undefined, definitions: Definition[]) => {
+  const source = definitionForPiece(piece, definitions);
+  if (!source?.facility || !piece) return source?.facility;
+  const stage = piece.growthStage ?? (piece.evolved ? 1 : 0);
+  return source.growth && stage > 0 ? evolvedDefinition(source, stage).facility : source.facility;
 };
 export const threatened = (s: Match, target: Pos, by: Color, d: Definition[]): boolean =>
   s.board.some((piece, i) => {
@@ -552,6 +590,32 @@ function captureSquares(
     }
   }
   return targets;
+}
+function transportInterceptions(s: Match, route: Pos[], passengerId: string, definitions: Definition[]) {
+  const options: { enemyId: string; to: Pos }[] = [];
+  const passenger = s.board.find((piece) => piece?.id === passengerId);
+  if (!passenger) return options;
+  s.board.forEach((enemy, index) => {
+    if (!enemy || enemy.color === passenger.color || enemy.role === "knight" || activeFacility(enemy, definitions)) return;
+    const from = { row: Math.floor(index / 8), col: index % 8 };
+    let scoped = definitions;
+    if (enemy.role === "custom") {
+      const sourceDefinition = definitions.find((definition) => definition.id === enemy.definitionId);
+      if (!sourceDefinition) return;
+      const stage = enemy.growthStage ?? (enemy.evolved ? 1 : 0);
+      const source = sourceDefinition.growth && stage > 0 ? evolvedDefinition(sourceDefinition, stage) : enemy.evolved && sourceDefinition.transformation ? transformedDefinition(sourceDefinition) : sourceDefinition;
+      if (!source) return;
+      const patterns = source.patterns
+        .filter((pattern) => pattern.kind === "direction" && ["capture", "both"].includes(pattern.usage ?? "both"))
+        .map((pattern) => ({ ...pattern, cannon: false, growthCannon: false, passEnemies: undefined, charge: false, recoil: false }));
+      if (!patterns.length) return;
+      scoped = definitions.map((definition) => definition.id === source.id ? { ...source, facility: undefined, patterns } : definition);
+    }
+    const attacked = captureSquares(s, from, scoped);
+    for (const to of route) if (attacked.some((mark) => eq(mark.to, to)) && (!at(s, to) || at(s, to)?.id === passengerId))
+      options.push({ enemyId: enemy.id, to });
+  });
+  return [...new Map(options.map((option) => [`${option.enemyId}:${option.to.row},${option.to.col}`, option])).values()];
 }
 
 /** Occupancy-aware movement and hypothetical capture reach for UI inspection. */
@@ -621,6 +685,10 @@ function raw(s: Match, m: Move): Match {
   }
   if (m.enPassant) b[idx({ row: m.from.row, col: m.to.col })] = null;
   if (m.passCaptureAt) b[idx(m.passCaptureAt)] = null;
+  if (m.capturePieceId) {
+    const captureIndex = b.findIndex((piece) => piece?.id === m.capturePieceId);
+    if (captureIndex >= 0) b[captureIndex] = null;
+  }
   b[idx(m.from)] = null;
   const landing = m.recoilTo ?? m.to;
   b[idx(m.to)] = null;
@@ -634,11 +702,24 @@ function raw(s: Match, m: Move): Match {
   }
   return { ...s, board: b };
 }
+function moveCaptures(s: Match, move: Move) {
+  let state = s;
+  for (const step of move.chain?.length ? move.chain : [move]) {
+    if (step.passCaptureAt || step.capturePieceId || (!step.swap && !step.transit && !step.stationary && at(state, step.to))) return true;
+    state = raw(state, step);
+  }
+  return false;
+}
 export function legal(s: Match, from: Pos, d: Definition[]): Move[] {
   const p = at(s, from);
   if (!p || p.color !== s.turn || s.winner || s.draw) return [];
-  const first = pseudo(s, from, d).filter((move) => {
+  const interceptionMoves = (s.transportExposure?.owner === other(p.color)
+    ? s.transportExposure.options.filter((option) => option.enemyId === p.id).map((option): Move => ({ from, to: option.to, facilityAction: "intercept", capturePieceId: s.transportExposure!.passengerId }))
+    : []);
+  const first = [...pseudo(s, from, d), ...interceptionMoves].filter((move) => {
     const target = at(s, move.passCaptureAt ?? move.to);
+    const longDirection = move.sourceRange === 3 || move.sourceRange === "slide" || ["rook", "bishop", "queen"].includes(p.role);
+    if (target && longDirection && fortressProtects(s, move.passCaptureAt ?? move.to, target.color, d)) return false;
     const definition = definitionForPiece(target, d);
     if (target && definition?.deathbind && (target.evolved || target.summoned) && !(target.sealedUntil && (s.ply ?? 0) <= target.sealedUntil) && isRoyal(p, d)) return false;
     if (target && definition?.dark && (target.evolved || target.summoned) && !(target.sealedUntil && (s.ply ?? 0) <= target.sealedUntil)) {
@@ -670,6 +751,48 @@ export function legal(s: Match, from: Pos, d: Definition[]): Move[] {
             k = king(n, p.color);
           return !!k && !threatened(n, k, other(p.color), d);
         });
+  const facilityMoves: Move[] = [];
+  const passengerFacility = definitionForPiece(p, d)?.facility;
+  if (!passengerFacility && p.role !== "king" && !["hound", "boar", "piglet", "raptor", "crow", "demon"].includes(p.role)) {
+    for (const target of s.facilityTargets ?? []) {
+      const towerIndex = s.board.findIndex((piece) => piece?.id === target.towerId);
+      const targetIndex = s.board.findIndex((piece) => piece?.id === target.targetId);
+      if (towerIndex < 0 || targetIndex < 0) continue;
+      const tower = s.board[towerIndex]!, towerPos = { row: Math.floor(towerIndex / 8), col: towerIndex % 8 };
+      if (tower.color !== p.color || tower.sealedUntil && (s.ply ?? 0) <= tower.sealedUntil || Math.max(Math.abs(towerPos.row - from.row), Math.abs(towerPos.col - from.col)) > 1) continue;
+      const facility = activeFacility(tower, d);
+      if (facility?.kind !== "watchtower") continue;
+      const targetPos = { row: Math.floor(targetIndex / 8), col: targetIndex % 8 };
+      const radius = facility.radius ?? 1;
+      for (let dy = -radius; dy <= radius; dy++) for (let dx = -radius; dx <= radius; dx++) {
+        const to = { row: targetPos.row + dy, col: targetPos.col + dx };
+        if ((dx || dy) && inside(to) && !at(s, to)) facilityMoves.push({ from, to, facilityAction: "spotter" });
+      }
+    }
+    s.board.forEach((wagon, wagonIndex) => {
+      if (!wagon || wagon.color !== p.color || wagon.sealedUntil && (s.ply ?? 0) <= wagon.sealedUntil || activeFacility(wagon, d)?.kind !== "wagon") return;
+      const wagonPos = { row: Math.floor(wagonIndex / 8), col: wagonIndex % 8 };
+      if (Math.max(Math.abs(wagonPos.row - from.row), Math.abs(wagonPos.col - from.col)) > 2) return;
+      for (const vector of orth) for (let distance = 1; distance <= 3; distance++) {
+        const to = { row: wagonPos.row + vector.dy * distance, col: wagonPos.col + vector.dx * distance };
+        if (!inside(to) || at(s, to)) continue;
+        const route = Array.from({ length: distance }, (_, index) => ({ row: wagonPos.row + vector.dy * (index + 1), col: wagonPos.col + vector.dx * (index + 1) }));
+        const transport: Move = { from, to, facilityAction: "wagon", wagonRoute: route };
+        facilityMoves.push(transport);
+        const after = raw(s, transport);
+        for (const next of pseudo(after, to, d).filter((move) => !moveCaptures(after, move) && !move.stationary && !move.transit))
+          {
+            const action: Move = { ...transport, next: { ...next, facilityAction: "wagon" } };
+            facilityMoves.push(action);
+          }
+      }
+    });
+  }
+  const safeFacilityMoves = s.preset !== "classic" ? facilityMoves : facilityMoves.filter((move) => {
+    const after = raw(move.next ? raw(s, move) : s, move.next ?? move);
+    const royal = king(after, p.color);
+    return !!royal && !threatened(after, royal, other(p.color), d);
+  });
   if (p.role === "hound") {
     const ownerIndex = s.board.findIndex((piece) => piece?.id === p.dogOwnerId);
     const owner = ownerIndex < 0 ? null : { row: Math.floor(ownerIndex / 8), col: ownerIndex % 8 };
@@ -771,7 +894,7 @@ export function legal(s: Match, from: Pos, d: Definition[]): Move[] {
     for (const firstMove of base) {
       const capturedFirst = !!at(s, firstMove.to);
       const afterFirst = raw(s, firstMove);
-      for (const secondMove of standard(afterFirst, firstMove.to, at(afterFirst, firstMove.to)!)) {
+      for (const secondMove of standard(afterFirst, firstMove.to, at(afterFirst, firstMove.to)!, d)) {
         if (capturedFirst && at(afterFirst, secondMove.to)) continue;
         const afterSecond = raw(afterFirst, secondMove);
         if (s.preset === "classic") {
@@ -783,7 +906,7 @@ export function legal(s: Match, from: Pos, d: Definition[]): Move[] {
     }
     return combined;
   }
-  if (p.role !== "custom") return base;
+  if (p.role !== "custom") return [...base, ...safeFacilityMoves];
   const definition = definitionForPiece(p, d);
   if (!definition) return base;
   const growthStage = p.growthStage ?? (p.evolved ? 1 : 0);
@@ -791,7 +914,7 @@ export function legal(s: Match, from: Pos, d: Definition[]): Move[] {
     ? evolvedDefinition(definition, growthStage)
     : p.evolved && definition.transformation ? transformedDefinition(definition) : definition;
   if (p.rebirthEnhanced) activeDefinition = rebirthEnhancedDefinition(definition, activeDefinition);
-  const combined: Move[] = [...base];
+  const combined: Move[] = [...base, ...safeFacilityMoves];
   const pieceSealed = !!p.sealedUntil && (s.ply ?? 0) <= p.sealedUntil;
   if (p.evolved && !pieceSealed) {
     const evolution = definition.growth
@@ -874,7 +997,14 @@ export function legal(s: Match, from: Pos, d: Definition[]): Move[] {
         const baseDistance = launch.runup + launch.jump;
         for (const offset of launch.width === 3 ? [-1, 0, 1] : [0]) {
           const distance = baseDistance + offset;
-          if (distance > launch.runup) anchors.push({ row: from.row + oriented.dy * distance, col: from.col + oriented.dx * distance });
+          if (distance <= launch.runup) continue;
+          let structureBlocked = false;
+          for (let step = 1; step < distance; step++) {
+            const crossed = at(s, { row: from.row + oriented.dy * step, col: from.col + oriented.dx * step });
+            const facility = definitionForPiece(crossed, d)?.facility;
+            if (facility && facility.kind !== "wagon" && !(crossed?.sealedUntil && (s.ply ?? 0) <= crossed.sealedUntil)) { structureBlocked = true; break; }
+          }
+          if (!structureBlocked) anchors.push({ row: from.row + oriented.dy * distance, col: from.col + oriented.dx * distance });
         }
       } else continue;
       for (const anchor of anchors) {
@@ -1178,11 +1308,16 @@ export function play(s: Match, m: Move, d: Definition[]) {
   const steps = m.chain?.length ? m.chain : [m, ...(m.next ? [m.next] : [])];
   const p = at(s, steps[0].from)!;
   let before = s;
+  let transportState: Match | undefined;
   const captures: Piece[] = [];
-  for (const step of steps) {
-    const captured = step.passCaptureAt ? at(before, step.passCaptureAt) : (step.swap || step.transit || step.stationary ? null : at(before, step.to));
+  for (const [stepIndex, step] of steps.entries()) {
+    const captured = step.capturePieceId
+      ? before.board.find((piece) => piece?.id === step.capturePieceId) ?? null
+      : step.passCaptureAt ? at(before, step.passCaptureAt) : (step.swap || step.transit || step.stationary ? null : at(before, step.to));
     if (captured) captures.push(captured);
     before = raw(before, step);
+    // 迎撃射線は荷降ろし直後に一度だけ確定する。追加移動後の盤面では再計算しない。
+    if (stepIndex === 0 && m.facilityAction === "wagon") transportState = before;
   }
   const lastStep = steps[steps.length - 1],
     enemy = other(p.color),
@@ -1280,11 +1415,17 @@ export function play(s: Match, m: Move, d: Definition[]) {
       ? n.lost[enemy] >= n.targets[enemy]
       : s.preset === "royal-any" && !!royalCaptures.length;
   const f = (c: number) => String.fromCharCode(97 + c);
+  const interceptions = transportState && m.wagonRoute
+    ? transportInterceptions(transportState, m.wagonRoute, p.id, d)
+    : [];
   n = {
     ...n,
     turn: enemy,
     ply: (s.ply ?? 0) + 1,
     lastMovedPieceId: p.id,
+    transportExposure: interceptions.length
+      ? { passengerId: p.id, owner: p.color, options: interceptions }
+      : undefined,
     enPassant:
       !m.chain && !m.next &&
       !m.stationary &&
@@ -1374,6 +1515,48 @@ export function play(s: Match, m: Move, d: Definition[]) {
         n.trackingWatches!.push({ trackerId: tracker.id, patternIndex, targetId: target.id, duration: pattern.tracking.duration });
       }
     });
+  }
+
+  // 見張り台：自軍手番終了時に最大2体を監視し、対象が監視線を外れた相手手番終了時に捕捉する。
+  n.facilityTargets = (n.facilityTargets ?? []).filter((item) => {
+    const tower = n.board.find((piece) => piece?.id === item.towerId);
+    return !!tower && tower.color !== p.color && n.board.some((piece) => piece?.id === item.targetId);
+  });
+  const nextFacilityWatches: NonNullable<Match["facilityWatches"]> = [];
+  for (const watch of n.facilityWatches ?? []) {
+    const towerIndex = n.board.findIndex((piece) => piece?.id === watch.towerId), targetIndex = n.board.findIndex((piece) => piece?.id === watch.targetId);
+    if (towerIndex < 0 || targetIndex < 0) continue;
+    const tower = n.board[towerIndex]!, target = n.board[targetIndex]!;
+    if (tower.color === p.color) continue;
+    const towerPos = { row: Math.floor(towerIndex / 8), col: towerIndex % 8 }, targetPos = { row: Math.floor(targetIndex / 8), col: targetIndex % 8 };
+    const dr = targetPos.row - towerPos.row, dc = targetPos.col - towerPos.col;
+    const aligned = watch.directions === "orthogonal" ? (!dr !== !dc) : Math.abs(dr) === Math.abs(dc);
+    const step = { dy: Math.sign(dr), dx: Math.sign(dc) };
+    let clear = aligned;
+    if (aligned) for (let distance = 1; distance < Math.max(Math.abs(dr), Math.abs(dc)); distance++)
+      if (at(n, { row: towerPos.row + step.dy * distance, col: towerPos.col + step.dx * distance })) { clear = false; break; }
+    if (!clear && !isRoyal(target, d)) n.facilityTargets!.push({ towerId: tower.id, targetId: target.id, remaining: 1 });
+    else nextFacilityWatches.push(watch);
+  }
+  n.facilityWatches = nextFacilityWatches;
+  for (let towerIndex = 0; towerIndex < n.board.length; towerIndex++) {
+    const tower = n.board[towerIndex];
+    if (!tower || tower.color !== p.color || tower.sealedUntil && (n.ply ?? 0) <= tower.sealedUntil) continue;
+    const facility = activeFacility(tower, d);
+    if (facility?.kind !== "watchtower") continue;
+    const towerPos = { row: Math.floor(towerIndex / 8), col: towerIndex % 8 };
+    const vectors = facility.directions === "orthogonal" ? orth : directions.filter((vector) => vector.dx && vector.dy);
+    const candidates: { targetId: string; distance: number }[] = [];
+    for (const vector of vectors) for (let distance = 1; distance <= 7; distance++) {
+      const pos = { row: towerPos.row + vector.dy * distance, col: towerPos.col + vector.dx * distance };
+      if (!inside(pos)) break;
+      const target = at(n, pos);
+      if (!target) continue;
+      if (target.color !== tower.color && !isRoyal(target, d)) candidates.push({ targetId: target.id, distance });
+      break;
+    }
+    candidates.sort((a, b) => a.distance - b.distance || a.targetId.localeCompare(b.targetId)).slice(0, 2)
+      .forEach((candidate) => n.facilityWatches!.push({ towerId: tower.id, targetId: candidate.targetId, directions: facility.directions }));
   }
 
   // 契約魔神の寿命。召喚された手番ではなく、以後の所有者手番終了ごとに減少する。
